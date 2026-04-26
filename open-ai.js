@@ -4,7 +4,7 @@
 // @version      1.9.93
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/open-ai.js
-// @timestamp    2026-4-26
+// @timestamp    2026-4-27
 // @license      MIT
 // ==/UserScript==
 
@@ -188,9 +188,13 @@ if (!seal.ext.find("openai动态兼容插件")) {
       this.fictionHistory = [];
       this.systemPrompt = [];
       this.postFictionHistory = [];
+      this.fictionRoleHistory = [];
+      this.postFictionRoleHistory = [];
+      this.fixedRoleSetting = [];
     }
     refresh(config) {
-      const parseHistory = (content) => {
+      const parseHistory = (content, type = "core") => {
+        if (!content) return [];
         return content
           .split("\n")
           .filter((line) => {
@@ -205,15 +209,23 @@ if (!seal.ext.find("openai动态兼容插件")) {
             return {
               role: parts[0].trim(),
               content: parts.slice(1).join(":").trim(),
-              _type: "core",
+              _type: type,
             };
           });
       };
-      this.fictionHistory = parseHistory(config.fictionHistory);
+      
+      this.fictionHistory = parseHistory(config.fictionHistory, "core");
       this.systemPrompt = config.systemPrompt
         ? [{ role: "system", content: config.systemPrompt, _type: "core" }]
         : [];
-      this.postFictionHistory = parseHistory(config.postFictionHistory);
+      this.postFictionHistory = parseHistory(config.postFictionHistory, "core");
+      
+      // 角色配置模块化初始化与缓存解析
+      this.fictionRoleHistory = parseHistory(config.fictionRoleHistory, "fixed_role_fiction");
+      this.postFictionRoleHistory = parseHistory(config.postFictionRoleHistory, "fixed_role_post_fiction");
+      this.fixedRoleSetting = config.fixedRoleSetting 
+        ? [{ role: "system", content: config.fixedRoleSetting, _type: "fixed_role_setting" }]
+        : [];
     }
     get coreMessages() {
       return [...this.fictionHistory, ...this.systemPrompt, ...this.postFictionHistory];
@@ -343,6 +355,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
       
       const anchorsInsertion = [];
 
+      // 个人系统提示享有最高排他权：如配置，则全面覆盖基础系统提示、角色卡及锚定设定
       if (!pConfig.systemPrompt) {
         for (let d = 0; d < 5; d++) {
           const fixedContent = (pConfig.fixedAnchors && pConfig.fixedAnchors[d] !== undefined) 
@@ -355,67 +368,33 @@ if (!seal.ext.find("openai动态兼容插件")) {
             let targetIndex = dynamicClone.length - d;
             if (targetIndex < 0) targetIndex = 0; 
             
-            // 锚定项角色配置
             anchorsInsertion.push({
               index: targetIndex,
               messages: [{ role: "system", content: parsedAnchor, _type: `fixed_anchor_${d}` }]
             });
           }
         }
-      }
+        
+        // 提取模块化角色设定及历史（不推送到云端）
+        const roleDepth = this.config.fixedRoleSettingDepth;
+        const roleIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - roleDepth));
 
-      const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
-      const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
+        let roleMessages = [
+          ...this.anchor.fictionRoleHistory,
+          ...this.anchor.fixedRoleSetting,
+          ...this.anchor.postFictionRoleHistory
+        ];
 
-      // 提取通用历史记录解析器供角色配置模块化使用
-      const parseRoleHistory = (content, defaultType) => {
-        if (!content) return [];
-        return content
-          .split("\n")
-          .filter((line) => {
-            const parts = line.split(":").map((p) => p.trim());
-            return (
-              parts.length >= 2 &&
-              ["system", "user", "assistant"].includes(parts[0])
-            );
-          })
-          .map((line) => {
-            const parts = line.split(":");
-            return {
-              role: parts[0].trim(),
-              content: parts.slice(1).join(":").trim(),
-              _type: defaultType,
-            };
-          });
-      };
-
-      if (!pConfig.systemPrompt) {
-        const hasRoleSetting = this.config.fixedRoleSetting && this.config.fixedRoleSetting.trim() !== "";
-        const hasFictionRole = this.config.fictionRoleHistory && this.config.fictionRoleHistory.trim() !== "";
-        const hasPostFictionRole = this.config.postFictionRoleHistory && this.config.postFictionRoleHistory.trim() !== "";
-
-        if (hasRoleSetting || hasFictionRole || hasPostFictionRole) {
-          const roleDepth = this.config.fixedRoleSettingDepth;
-          const roleIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - roleDepth));
-
-          let roleMessages = [];
-
-          if (hasFictionRole) {
-            roleMessages.push(...parseRoleHistory(this.config.fictionRoleHistory, "fixed_role_fiction"));
-          }
-          if (hasRoleSetting) {
-            roleMessages.push({ role: "system", content: this.config.fixedRoleSetting, _type: "fixed_role_setting" });
-          }
-          if (hasPostFictionRole) {
-            roleMessages.push(...parseRoleHistory(this.config.postFictionRoleHistory, "fixed_role_post_fiction"));
-          }
-
+        if (roleMessages.length > 0) {
           anchorsInsertion.push({
             index: roleIndex,
             messages: roleMessages
           });
         }
       }
+
+      const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
+      const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
 
       anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
       
@@ -804,13 +783,13 @@ if (!seal.ext.find("openai动态兼容插件")) {
           }
       }
 
-      // 纯净化：不留占位符直接抹除
+      // 静默替换为不支持格式占位符
       let cleanedMarkdown = markdown;
       for (const str of stringsToRemove) {
-          cleanedMarkdown = cleanedMarkdown.replace(str, ''); 
+          cleanedMarkdown = cleanedMarkdown.replace(str, '[non-supported format]'); 
       }
-      // 去除HTML的 <img> 标签污染正则
-      cleanedMarkdown = cleanedMarkdown.replace(/<img[^>]+>/ig, ""); 
+      // 去除HTML的 <img> 标签污染正则并替换占位符
+      cleanedMarkdown = cleanedMarkdown.replace(/<img[^>]+>/ig, "[non-supported format]"); 
 
       return {
           topImages: validImages.sort((a, b) => b.score - a.score),
@@ -1165,7 +1144,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
             if (codeBlockMatch) {
                 if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
                 session.personalConfig.fixedAnchors[0] = codeBlockMatch[0];
-                if (dynConfig.debugMode) console.log("✧ 状态栏更新 成功正则提取并更新个人配置项：锚定项0.");
+                if (dynConfig.debugMode) console.log("✧ 状态栏更新 成功正则提取并更新个人配置项：锚定项0");
             } else {
                 if (dynConfig.debugMode) console.log("✧ 状态栏更新 未检测到代码块，跳过更新");
             }
@@ -1204,7 +1183,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
     const apiKey = dynamicConfig.serperApiKey;
     if (!apiKey) {
         console.error("✧ 联网搜索 缺少 Serper搜索API密钥 配置");
-        return "✧ 未配置搜索API密钥，无法进行搜索";
+        return "✧ 未配置搜索API密钥 无法进行搜索";
     }
     try {
         const response = await safeFetchWithTimeout("https" + "://google.serper.dev/search", {
@@ -1221,7 +1200,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
         if (data.organic && data.organic.length > 0) {
             return data.organic.slice(0, 5).map(item => `标题: ${item.title}\n摘要: ${item.snippet}\n链接: ${item.link}`).join("\n\n");
         }
-        return "未找到相关搜索结果。";
+        return "未找到相关搜索结果";
     } catch (error) {
         console.error("✧ 联网搜索 异常:", error);
         return "搜索执行异常: " + error.message;
@@ -1343,7 +1322,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
       const downloadUrl = (await response.text()).trim();
       const title = sessionName ? `「${sessionName}」` : "当前对话记录";
       return `✧ 导出${title}成功\n阅览地址：${downloadUrl}\n下载地址：${downloadUrl}.txt\n(链接有效期：7天)\n\n请在浏览器打开另存为下载`;
-    } catch (error) { console.error("✧ 导出会话失败 ", error); return `✧导出失败  ${error.message}`; }
+    } catch (error) { console.error("✧ 导出会话失败 ", error); return `✧ 导出失败 ${error.message}`; }
   }
 
   async function handleMessage(ctx, msg) {
@@ -1593,7 +1572,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                 if (cmd.type === "int") finalVal = parseInt(val, 10);
 
                 if ((cmd.type === "float" || cmd.type === "int") && isNaN(finalVal)) {
-                    seal.replyToSender(ctx, msg, `✧配置失败 ${cmd.label}需要填入有效的数字`);
+                    seal.replyToSender(ctx, msg, `✧ 配置失败 ${cmd.label}需要填入有效的数字`);
                 } else {
                     session.personalConfig[cmd.key] = finalVal;
                     updateSession(sessionKey, session);
@@ -1650,7 +1629,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
             updateSession(sessionKey, session);
             seal.replyToSender(ctx, msg, `✧ 当前环境的${target}已重置`);
         } else {
-            seal.replyToSender(ctx, msg, `✧ 未找到配置项「${target}」。\n支持重置：系统提示/api端点/api密钥/识别图片/联网请求/外部模组地址/模型名称/随机种子/纯净模式/温度/深度等，或直接发送"重置配置"重置所有。`);
+            seal.replyToSender(ctx, msg, `✧ 未找到配置项「${target}」\n支持重置：系统提示/api端点/api密钥/识别图片/联网请求/外部模组地址/模型名称/随机种子/纯净模式/温度/深度等，或直接发送"重置配置"重置所有`);
         }
         return true;
       }
@@ -1666,12 +1645,15 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
     }
 
     if (text.match(/^导出系统提示(.*)$/)) {
-      if (ctx.privilegeLevel < 100) return seal.replyToSender(ctx, msg, "权限不足，仅骰主可以导出系统提示。");
+      if (ctx.privilegeLevel < 100) return seal.replyToSender(ctx, msg, "✧ 权限不足 仅骰主可以导出系统提示");
       dynamicConfig.refresh();
       let exportText = "";
       if (dynamicConfig.systemPrompt) exportText += `✧ 基础系统提示 ✧\n${dynamicConfig.systemPrompt}\n\n`;
       if (dynamicConfig.fictionHistory) exportText += `✧ 虚构历史记录 ✧\n${dynamicConfig.fictionHistory}\n\n`;
       if (dynamicConfig.postFictionHistory) exportText += `✧ 后置虚构历史记录 ✧\n${dynamicConfig.postFictionHistory}\n\n`;
+      if (dynamicConfig.fixedRoleSetting) exportText += `✧ 固定角色设定 ✧\n${dynamicConfig.fixedRoleSetting}\n\n`;
+      if (dynamicConfig.fictionRoleHistory) exportText += `✧ 虚构角色历史 ✧\n${dynamicConfig.fictionRoleHistory}\n\n`;
+      if (dynamicConfig.postFictionRoleHistory) exportText += `✧ 后置虚构角色历史 ✧\n${dynamicConfig.postFictionRoleHistory}\n\n`;
 
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
@@ -1685,7 +1667,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         seal.replyToSender(ctx, msg, `✧ 导出系统提示成功\n阅览地址：${downloadUrl}\n下载地址：${downloadUrl}.txt\n(链接有效期：7天)\n\n请在浏览器打开另存为下载`);
       } catch (error) { 
         console.error("导出系统提示失败:", error); 
-        seal.replyToSender(ctx, msg, `✧导出系统提示失败: ${error.message}`); 
+        seal.replyToSender(ctx, msg, `✧ 导出系统提示失败: ${error.message}`); 
       }
       return;
     }
@@ -1838,7 +1820,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                   seal.replyToSender(ctx, msg, `✧ 模组「${moduleName}」加载成功`);
               } catch (error) {
                   console.error("加载外部模组文件失败:", error);
-                  seal.replyToSender(ctx, msg, `✧ 加载模组「${moduleName}」失败。\n(请确认该 txt 文件已部署在外部模组服务地址下)\n错误详情: ${error.message}`);
+                  seal.replyToSender(ctx, msg, `✧ 加载模组「${moduleName}」失败\n(请确认该 txt 文件已部署在外部模组服务地址下)\n错误详情: ${error.message}`);
               }
               return;
           }
@@ -1884,13 +1866,10 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           const result = await sendOpenAIRequest(payload, ctx, msg, session);
           session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
 
-          // 修复：生成完回复后，立马先存一次盘，确保上下文记忆绝对不会丢！
           updateSession(sessionKey, session); 
 
-          // 然后再去慢慢请求状态栏
           await updateStatusBar(session, result.originalReply, dynamicConfig);
 
-          // 状态栏生成完毕并更新了锚定项后，再覆盖保存一次配置
           updateSession(sessionKey, session); 
 
         } catch (error) { seal.replyToSender(ctx, msg, `✧ 重新生成失败: ${error.message}`); }
@@ -1995,13 +1974,10 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           const result = await sendOpenAIRequest(payload, ctx, msg, session); 
           session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
 
-          // 【立刻存盘】：回复一出来就保存，确保就算状态栏炸了记忆也不丢
           updateSession(sessionKey, session); 
 
-          // 然后再去请求状态栏
           await updateStatusBar(session, result.originalReply, dynamicConfig);
 
-          // 状态栏如果有更新，再存一次覆盖
           updateSession(sessionKey, session); 
         } catch (error) { console.error("API请求失败:", error); }
         return;
