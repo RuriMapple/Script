@@ -2220,4 +2220,4 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-          }
+  }
