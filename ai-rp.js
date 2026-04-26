@@ -1128,6 +1128,25 @@ if (!seal.ext.find("AI-role")) {
                               ? session.personalConfig.fixedAnchors[0] 
                               : (dynConfig.fixedAnchors[0] || "");
 
+        // --- 新增流程：加载当前轮次的角色卡并拼接 ---
+        let roleCardsContent = "";
+        if (session.lockedContents && session.lockedContents.roleCards) {
+            for (const cardId in session.lockedContents.roleCards) {
+                const cardData = session.lockedContents.roleCards[cardId];
+                if (cardData && cardData.content) {
+                    // 使用标题为"角色卡+数字"的代码块包裹
+                    roleCardsContent += `\`\`\`角色卡${cardId}\n${cardData.content}\n\`\`\`\n`;
+                }
+            }
+        }
+        
+        let combinedAnchor0 = currentAnchor0;
+        if (roleCardsContent.trim() !== "") {
+            // 锚定项0前后拼接合并进锚定项0的文本一次
+            combinedAnchor0 = `${currentAnchor0}\n\n${roleCardsContent.trim()}`;
+        }
+        // ----------------------------------------------
+
         let latestUserInput = "";
         const dynamic = session.dynamicContent;
         for (let i = dynamic.length - 1; i >= 0; i--) {
@@ -1138,7 +1157,8 @@ if (!seal.ext.find("AI-role")) {
             }
         }
 
-        const statusBarPrompt = dynConfig.statusBarPrefix + "\n\n【最新一轮用户输入】\n" + latestUserInput + "\n\n【最新一轮AI回复】\n" + aiReply + "\n\n【当前锚定项0状态】\n" + currentAnchor0;
+        // 发送给处理状态栏的流程时，传入拼接合并后的 combinedAnchor0
+        const statusBarPrompt = dynConfig.statusBarPrefix + "\n\nuser: \n" + latestUserInput + "\n\nassistant: \n" + aiReply + "\n\n当前状态: \n" + combinedAnchor0;
         const newStatusBarRes = await sendPublicAPIRequest(session, [{role: "user", content: statusBarPrompt}], dynConfig);
         
         if (newStatusBarRes) {
@@ -2200,4 +2220,4 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-      }
+}
