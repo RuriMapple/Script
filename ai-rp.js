@@ -1335,7 +1335,7 @@ if (!seal.ext.find("AI-role")) {
         return `${roleLabel}: ${content}`;
     });
     try {
-      const response = await fetch("https://dpaste.com/api/v2", {
+      const response = await fetch("https://dpaste.com/api/v2/", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `content=${encodeURIComponent(messages.join("\n\n\n"))}&expiry_days=7`
@@ -1680,7 +1680,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
       try {
-        const response = await fetch("https://dpaste.com/api/v2", {
+        const response = await fetch("https://dpaste.com/api/v2/", {
           method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: `content=${encodeURIComponent(exportText.trim())}&expiry_days=7`
         });
@@ -2220,4 +2220,4 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-}
+          }
