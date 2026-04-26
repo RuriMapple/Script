@@ -18,7 +18,7 @@ if (!seal.ext.find("AI-role")) {
     timerId = setTimeout(() => reject(new Error("请求超时")), timeoutMs)
   );
   return Promise.race([fetch(url, options), timeoutPromise])
-    .finally(() => clearTimeout(timerId)); // 无论成功失败，都清理定时器
+    .finally(() => clearTimeout(timerId));
 }
 
   // 配置项注册
