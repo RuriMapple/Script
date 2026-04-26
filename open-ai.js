@@ -9,7 +9,7 @@
 // ==/UserScript==
 
 if (!seal.ext.find("openai动态兼容插件")) {
-  const ext = seal.ext.new("openai动态兼容插件", "Sy", "1.9.92"); 
+  const ext = seal.ext.new("openai动态兼容插件", "Sy", "1.9.93"); 
   seal.ext.register(ext);
   
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
@@ -85,6 +85,16 @@ if (!seal.ext.find("openai动态兼容插件")) {
   // === 系统级独立动态锚定项 ===
   seal.ext.registerStringConfig(ext, "固定角色设定", "");
   seal.ext.registerStringConfig(ext, "固定角色设定深度", "0");
+  seal.ext.registerStringConfig(
+    ext,
+    "虚构角色历史",
+    "system: \nuser: \nassistant: "
+  );
+  seal.ext.registerStringConfig(
+    ext,
+    "后置虚构角色历史",
+    "user: \nassistant: "
+  );
 
   seal.ext.registerStringConfig(
     ext,
@@ -157,6 +167,8 @@ if (!seal.ext.find("openai动态兼容插件")) {
       
       this.fixedRoleSetting = seal.ext.getStringConfig(this.ext, "固定角色设定");
       this.fixedRoleSettingDepth = parseInt(seal.ext.getStringConfig(this.ext, "固定角色设定深度")) || 0;
+      this.fictionRoleHistory = seal.ext.getStringConfig(this.ext, "虚构角色历史");
+      this.postFictionRoleHistory = seal.ext.getStringConfig(this.ext, "后置虚构角色历史");
 
       this.fictionHistory = seal.ext.getStringConfig(this.ext, "虚构历史记录");
       this.postFictionHistory = seal.ext.getStringConfig(this.ext, "后置虚构历史记录");
@@ -355,13 +367,54 @@ if (!seal.ext.find("openai动态兼容插件")) {
       const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
       const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
 
-      if (!pConfig.systemPrompt && this.config.fixedRoleSetting && this.config.fixedRoleSetting.trim() !== "") {
-        const roleDepth = this.config.fixedRoleSettingDepth;
-        const roleIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - roleDepth));
-        anchorsInsertion.push({
-          index: roleIndex,
-          messages: [{ role: "system", content: this.config.fixedRoleSetting, _type: "fixed_role_setting" }]
-        });
+      // 提取通用历史记录解析器供角色配置模块化使用
+      const parseRoleHistory = (content, defaultType) => {
+        if (!content) return [];
+        return content
+          .split("\n")
+          .filter((line) => {
+            const parts = line.split(":").map((p) => p.trim());
+            return (
+              parts.length >= 2 &&
+              ["system", "user", "assistant"].includes(parts[0])
+            );
+          })
+          .map((line) => {
+            const parts = line.split(":");
+            return {
+              role: parts[0].trim(),
+              content: parts.slice(1).join(":").trim(),
+              _type: defaultType,
+            };
+          });
+      };
+
+      if (!pConfig.systemPrompt) {
+        const hasRoleSetting = this.config.fixedRoleSetting && this.config.fixedRoleSetting.trim() !== "";
+        const hasFictionRole = this.config.fictionRoleHistory && this.config.fictionRoleHistory.trim() !== "";
+        const hasPostFictionRole = this.config.postFictionRoleHistory && this.config.postFictionRoleHistory.trim() !== "";
+
+        if (hasRoleSetting || hasFictionRole || hasPostFictionRole) {
+          const roleDepth = this.config.fixedRoleSettingDepth;
+          const roleIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - roleDepth));
+
+          let roleMessages = [];
+
+          if (hasFictionRole) {
+            roleMessages.push(...parseRoleHistory(this.config.fictionRoleHistory, "fixed_role_fiction"));
+          }
+          if (hasRoleSetting) {
+            roleMessages.push({ role: "system", content: this.config.fixedRoleSetting, _type: "fixed_role_setting" });
+          }
+          if (hasPostFictionRole) {
+            roleMessages.push(...parseRoleHistory(this.config.postFictionRoleHistory, "fixed_role_post_fiction"));
+          }
+
+          anchorsInsertion.push({
+            index: roleIndex,
+            messages: roleMessages
+          });
+        }
       }
 
       anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
