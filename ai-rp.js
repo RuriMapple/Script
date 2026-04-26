@@ -1,4 +1,3 @@
-// ==UserScript==
 // @name         OpenAI兼容
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
 // @version      1.9.94
@@ -13,16 +12,13 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.register(ext);
   
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
-    // 放弃 AbortController，改用 Promise.race 兼容旧引擎
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("请求超时")), timeoutMs)
-    );
-
-    return Promise.race([
-      fetch(url, options),
-      timeoutPromise
-    ]);
-  }
+  let timerId;
+  const timeoutPromise = new Promise((_, reject) => 
+    timerId = setTimeout(() => reject(new Error("请求超时")), timeoutMs)
+  );
+  return Promise.race([fetch(url, options), timeoutPromise])
+    .finally(() => clearTimeout(timerId)); // 无论成功失败，都清理定时器
+}
 
   // 配置项注册
   seal.ext.registerStringConfig(ext, "API密钥", "sk-xxx");
@@ -237,17 +233,17 @@ if (!seal.ext.find("AI-role")) {
       this.webSearchContext = null; 
       
       this.personalConfig = { 
-        apiUrl: null, apiKey: null, modelName: null, 
-        pureModeEnabled: null, useReply: null, enableStream: null,
-        temperature: null, top_p: null, top_k: null,
-        presence_penalty: null, frequency_penalty: null, seed: null,
-        depth: null, filterIdEnabled: null, enableImage: null, debugMode: null, 
-        enableNetwork: null, maxNetworkIterations: null, webpageMaxLength: null,
-        enableKBSync: null, kbSyncApi: null,
-        enableKBQuery: null, kbQueryApi: null,
-        maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
-        moduleBaseUrl: null, fixedAnchors: {}
-      };
+  apiUrl: null, apiKey: null, modelName: null, 
+  pureModeEnabled: null, useReply: null, enableStream: null,
+  temperature: null, top_p: null, top_k: null,
+  presence_penalty: null, frequency_penalty: null, seed: null,
+  depth: null, filterIdEnabled: null, enableImage: null, debugMode: null, 
+  enableNetwork: null, maxNetworkIterations: null, webpageMaxLength: null,
+  enableKBSync: null, kbSyncApi: null,
+  enableKBQuery: null, kbQueryApi: null,
+  maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
+  moduleBaseUrl: null, moduleData: null, fixedAnchors: {}
+};
     }
     lockModule(content) {
       if (content) {
@@ -346,28 +342,13 @@ if (!seal.ext.find("AI-role")) {
 
       let dynamicClone = JSON.parse(JSON.stringify(originalDynamic));
       
-      const anchorsInsertion = [];
+const anchorsInsertion = [];
+
+      const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
+      const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
+      anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
 
       if (!pConfig.systemPrompt) {
-        for (let d = 0; d < 5; d++) {
-          const fixedContent = (pConfig.fixedAnchors && pConfig.fixedAnchors[d] !== undefined) 
-                               ? pConfig.fixedAnchors[d] 
-                               : this.config.fixedAnchors[d];
-          
-          if (fixedContent && fixedContent.trim() !== "") {
-            let parsedAnchor = fixedContent.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
-            
-            let targetIndex = dynamicClone.length - d;
-            if (targetIndex < 0) targetIndex = 0; 
-            
-            // 锚定项角色配置
-            anchorsInsertion.push({
-              index: targetIndex,
-              messages: [{ role: "system", content: parsedAnchor, _type: `fixed_anchor_${d}` }]
-            });
-          }
-        }
-
         const hasRoleSetting = this.config.fixedRoleSetting && this.config.fixedRoleSetting.trim() !== "";
         const fictionRole = this.anchor.fictionRoleHistory || [];
         const postFictionRole = this.anchor.postFictionRoleHistory || [];
@@ -377,28 +358,31 @@ if (!seal.ext.find("AI-role")) {
           const roleIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - roleDepth));
 
           let roleMessages = [];
+          if (fictionRole.length > 0) roleMessages.push(...fictionRole);
+          if (hasRoleSetting) roleMessages.push({ role: "system", content: this.config.fixedRoleSetting, _type: "fixed_role_setting" });
+          if (postFictionRole.length > 0) roleMessages.push(...postFictionRole);
 
-          if (fictionRole.length > 0) {
-            roleMessages.push(...fictionRole);
-          }
-          if (hasRoleSetting) {
-            roleMessages.push({ role: "system", content: this.config.fixedRoleSetting, _type: "fixed_role_setting" });
-          }
-          if (postFictionRole.length > 0) {
-            roleMessages.push(...postFictionRole);
-          }
+          anchorsInsertion.push({ index: roleIndex, messages: roleMessages });
+        }
 
-          anchorsInsertion.push({
-            index: roleIndex,
-            messages: roleMessages
-          });
+        for (let d = 0; d < 5; d++) {
+          const fixedContent = (pConfig.fixedAnchors && pConfig.fixedAnchors[d] !== undefined) 
+                               ? pConfig.fixedAnchors[d] 
+                               : this.config.fixedAnchors[d];
+          
+          if (fixedContent && fixedContent.trim() !== "") {
+            let parsedAnchor = fixedContent.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
+            
+            let targetIndex = dynamicClone.length - d;
+            if (targetIndex < 0) targetIndex = 0;
+            
+            anchorsInsertion.push({
+              index: targetIndex,
+              messages: [{ role: "system", content: parsedAnchor, _type: `fixed_anchor_${d}` }]
+            });
+          }
         }
       }
-
-      const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
-      const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
-
-      anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
       
       const anchorsMap = new Map();
       anchorsInsertion.forEach((item) => {
@@ -798,6 +782,25 @@ if (!seal.ext.find("AI-role")) {
           cleanedMarkdown: cleanedMarkdown
       };
   }
+
+async function syncModule(session, dynConfig) {
+    const pConfig = session?.personalConfig || {};
+    const moduleData = (pConfig.moduleData !== null && pConfig.moduleData !== undefined && pConfig.moduleData !== "")
+        ? pConfig.moduleData
+        : dynConfig.moduleData;
+
+    if (!moduleData || moduleData.trim() === "") {
+        if (session.lockedContents.module) {
+            session.clearLockedContent("module");
+        }
+        return;
+    }
+    const newContent = `<module_data>\n${moduleData}\n</module_data>`;
+    const currentLocked = session.lockedContents.module ? session.lockedContents.module.content : null;
+    if (currentLocked !== newContent) {
+        session.lockModule(newContent);
+    }
+}
 
   async function executeContextTasks(session, processedText, userId, sessionKey, dynConfig, ctx, msg) {
       session.webSearchContext = null; 
@@ -1458,6 +1461,7 @@ if (!seal.ext.find("AI-role")) {
 API端点: ${formatMasked(p.apiUrl)}
 API密钥: ${formatMasked(p.apiKey)}
 外部模组地址: ${formatVal(p.moduleBaseUrl)}
+个人模组: ${(p.moduleData !== null && p.moduleData !== undefined && p.moduleData !== "") ? "◈已配置◈" : "未配置(使用后台)"}
 模型名称: ${formatMasked(p.modelName)}
 纯净模式: ${formatBool(p.pureModeEnabled)}
 引用回复: ${formatBool(p.useReply)}
@@ -1615,16 +1619,16 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         
         if (!target || target === "api" || target === "配置" || target === "全部" || target === "所有") {
             session.personalConfig = { 
-              apiUrl: null, apiKey: null, modelName: null, 
-              pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null,
-              maxNetworkIterations: null, webpageMaxLength: null, enableKBSync: null, kbSyncApi: null,
-              enableKBQuery: null, kbQueryApi: null,
-              temperature: null, top_p: null, top_k: null,
-              presence_penalty: null, frequency_penalty: null, seed: null,
-              depth: null, filterIdEnabled: null,
-              maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
-              moduleBaseUrl: null, fixedAnchors: {}
-            };
+  apiUrl: null, apiKey: null, modelName: null, 
+  pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null,
+  maxNetworkIterations: null, webpageMaxLength: null, enableKBSync: null, kbSyncApi: null,
+  enableKBQuery: null, kbQueryApi: null,
+  temperature: null, top_p: null, top_k: null,
+  presence_penalty: null, frequency_penalty: null, seed: null,
+  depth: null, filterIdEnabled: null,
+  maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
+  moduleBaseUrl: null, moduleData: null, fixedAnchors: {}
+};
             updateSession(sessionKey, session);
             seal.replyToSender(ctx, msg, "✧ 当前环境配置已重置");
             return true;
@@ -1632,7 +1636,9 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
 
         const resetMap = {
             "api端点": "apiUrl", "api密钥": "apiKey", "api秘钥": "apiKey", "外部模组地址": "moduleBaseUrl",
-            "外部模组服务地址": "moduleBaseUrl", "模型名称": "modelName", "纯净模式": "pureModeEnabled",
+"外部模组服务地址": "moduleBaseUrl",
+"个人模组": "moduleData",
+"模组": "moduleData", "模型名称": "modelName", "纯净模式": "pureModeEnabled",
             "引用回复": "useReply", "流式请求": "enableStream", "识别图片": "enableImage", "图片识别": "enableImage",
             "开启识别图片": "enableImage", "开启图片识别": "enableImage", "调试模式": "debugMode", "开启调试模式": "debugMode",
             "联网请求": "enableNetwork", "开启联网请求": "enableNetwork", 
@@ -1816,37 +1822,36 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       }
 
       const loadModuleMatch = text.match(/^加载模组\s*(.*)$/);
-      if (loadModuleMatch) {
-          let moduleName = loadModuleMatch[1];
-          let session = getSession(sessionKey);
-          if (!moduleName || moduleName.trim() === "") {
-              let wrappedData = `<module_data>\n${dynamicConfig.moduleData}\n</module_data>`;
-              session.lockModule(wrappedData);
-              updateSession(sessionKey, session);
-              seal.replyToSender(ctx, msg, "✧ 默认模组配置已更新");
-              return;
-          } else {
-              moduleName = moduleName.trim();
-              seal.replyToSender(ctx, msg, `✧ 正在尝试获取模组 ${moduleName} ...`);
-              try {
-                  const pConfig = session.personalConfig || {};
-                  let baseUrl = pConfig.moduleBaseUrl || dynamicConfig.moduleBaseUrl || "http" + "://127.0.0.1:8080/modules/";
-                  if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
-                  const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
-                  const response = await fetch(fileUrl);
-                  if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
-                  const content = await response.text();
-                  let wrappedData = `<module_data>\n${content}\n</module_data>`;
-                  session.lockModule(wrappedData);
-                  updateSession(sessionKey, session);
-                  seal.replyToSender(ctx, msg, `✧ 模组「${moduleName}」加载成功`);
-              } catch (error) {
-                  console.error("加载外部模组文件失败:", error);
-                  seal.replyToSender(ctx, msg, `✧ 加载模组「${moduleName}」失败。\n(请确认该 txt 文件已部署在外部模组服务地址下)\n错误详情: ${error.message}`);
-              }
-              return;
-          }
-      }
+if (loadModuleMatch) {
+    let moduleName = loadModuleMatch[1].trim();
+    let session = getSession(sessionKey);
+    if (!moduleName) {
+        session.personalConfig.moduleData = null;
+        await syncModule(session, dynamicConfig);
+        updateSession(sessionKey, session);
+        seal.replyToSender(ctx, msg, "✧ 个人模组已清除 切换回后台模组");
+        return;
+    } else {
+        seal.replyToSender(ctx, msg, `✧ 正在尝试获取模组 ${moduleName} ...`);
+        try {
+            const pConfig = session.personalConfig || {};
+            let baseUrl = pConfig.moduleBaseUrl || dynamicConfig.moduleBaseUrl || "http" + "://127.0.0.1:8080/modules/";
+            if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
+            const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
+            const response = await fetch(fileUrl);
+            if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
+            const content = await response.text();
+            session.personalConfig.moduleData = content;
+            await syncModule(session, dynamicConfig);
+            updateSession(sessionKey, session);
+            seal.replyToSender(ctx, msg, `✧ 模组「${moduleName}」加载成功`);
+        } catch (error) {
+            console.error("加载外部模组文件失败:", error);
+            seal.replyToSender(ctx, msg, `✧ 加载模组「${moduleName}」失败\n(请确认该 txt 文件已部署在外部模组服务地址下)\n错误详情: ${error.message}`);
+        }
+        return;
+    }
+}
 
       if (text === "重新生成") {
         let session = getSession(sessionKey);
@@ -1873,11 +1878,12 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           }
         }
 
-        if (lastUserMsgText) {
+if (lastUserMsgText) {
              let rawUserText = lastUserMsgText;
              if (typeof rawUserText === 'string') {
                  rawUserText = rawUserText.replace(/^\(QQ:\d+\)\s*/i, "").replace(/^\(.*?\)\s*/, "");
              }
+             await syncModule(session, dynamicConfig); // ★ 加这行
              await executeContextTasks(session, rawUserText, userId, sessionKey, dynamicConfig, ctx, msg);
         }
 
@@ -1986,8 +1992,9 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           processedText = processedText.replace(cqImgFallbackRegex, "");
         }
 
-        processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
+processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
 
+        await syncModule(session, dynamicConfig); // ★ 加这行
         await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
 
         session.addDynamicMessage("user", processedText, null, userId);
@@ -2220,5 +2227,4 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-}
-
+              }
