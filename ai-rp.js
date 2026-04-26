@@ -1461,7 +1461,7 @@ async function syncModule(session, dynConfig) {
 API端点: ${formatMasked(p.apiUrl)}
 API密钥: ${formatMasked(p.apiKey)}
 外部模组地址: ${formatVal(p.moduleBaseUrl)}
-个人模组: ${(p.moduleData !== null && p.moduleData !== undefined && p.moduleData !== "") ? "◈已配置◈" : "未配置(使用后台)"}
+个人模组: ${(p.moduleData !== null && p.moduleData !== undefined && p.moduleData !== "") ? "◈已配置◈" : "未配置"}
 模型名称: ${formatMasked(p.modelName)}
 纯净模式: ${formatBool(p.pureModeEnabled)}
 引用回复: ${formatBool(p.useReply)}
@@ -2227,4 +2227,4 @@ processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.flo
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-    }
+          }
