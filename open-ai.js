@@ -3,7 +3,8 @@
 // @description  支持动态配置锚定和角色卡锁定的OpenAI兼容插件(含独立自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
 // @version      1.9.92
 // @author       Sy
-// @timestamp    2023-12-01
+// @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/open-ai
+// @timestamp    2026-4-26
 // @license      MIT
 // ==/UserScript==
 
