@@ -1148,7 +1148,6 @@ async function syncModule(session, dynConfig) {
             // 锚定项0前后拼接合并进锚定项0的文本一次
             combinedAnchor0 = `${currentAnchor0}\n\n${roleCardsContent.trim()}`;
         }
-        // ----------------------------------------------
 
         let latestUserInput = "";
         const dynamic = session.dynamicContent;
@@ -1883,7 +1882,7 @@ if (lastUserMsgText) {
              if (typeof rawUserText === 'string') {
                  rawUserText = rawUserText.replace(/^\(QQ:\d+\)\s*/i, "").replace(/^\(.*?\)\s*/, "");
              }
-             await syncModule(session, dynamicConfig); // ★ 加这行
+             await syncModule(session, dynamicConfig); 
              await executeContextTasks(session, rawUserText, userId, sessionKey, dynamicConfig, ctx, msg);
         }
 
@@ -1994,7 +1993,7 @@ if (lastUserMsgText) {
 
 processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
 
-        await syncModule(session, dynamicConfig); // ★ 加这行
+        await syncModule(session, dynamicConfig);
         await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
 
         session.addDynamicMessage("user", processedText, null, userId);
@@ -2227,4 +2226,4 @@ processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.flo
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-              }
+    }
