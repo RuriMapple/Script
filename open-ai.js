@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         openai动态兼容插件
 // @description  支持动态配置锚定和角色卡锁定的OpenAI兼容插件(含独立自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
-// @version      1.9.92
+// @version      1.9.93
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/open-ai
 // @timestamp    2026-4-26
@@ -11,8 +11,7 @@
 if (!seal.ext.find("openai动态兼容插件")) {
   const ext = seal.ext.new("openai动态兼容插件", "Sy", "1.9.92"); 
   seal.ext.register(ext);
-
-  // 安全的异步请求，带有 30 秒超时限制，彻底掐断底层连接防泄漏
+  
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
     // 放弃 AbortController，改用 Promise.race 兼容旧引擎
     const timeoutPromise = new Promise((_, reject) => 
@@ -25,7 +24,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
     ]);
   }
 
-  // 配置项注册 (私用默认API) - 防污染拼接
+  // 配置项注册
   seal.ext.registerStringConfig(ext, "API密钥", "sk-xxx");
   seal.ext.registerStringConfig(ext, "API端点", "https" + "://api.openai.com/v1/chat/completions");
   seal.ext.registerStringConfig(ext, "模型名称", "");
@@ -56,13 +55,13 @@ if (!seal.ext.find("openai动态兼容插件")) {
   seal.ext.registerBoolConfig(ext, "开启调试模式", false); 
   seal.ext.registerBoolConfig(ext, "开启联网请求", false); 
   
-  // === 联网与网页抓取参数 ===
+  // === 联网抓取参数 ===
   seal.ext.registerStringConfig(ext, "Serper搜索API密钥", ""); 
   seal.ext.registerStringConfig(ext, "联网最大迭代次数", "3"); 
   seal.ext.registerStringConfig(ext, "网页抓取最大字符数", "4000"); 
   seal.ext.registerStringConfig(ext, "联网请求前缀", "请根据以下用户的提问，使用搜索工具查找最新相关信息，然后**仅仅返回你认为最相关的网页链接列表**，无需任何多余的解释和客套话：\n"); 
 
-  // === 知识库热更新同步与检索相关 ===
+  // === 知识库热更新与检索相关配置 ===
   seal.ext.registerBoolConfig(ext, "开启知识库同步", false);
   seal.ext.registerStringConfig(ext, "知识库同步API", "");
 
@@ -83,7 +82,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
   seal.ext.registerStringConfig(ext, "随机种子(Seed)", "-1");
   seal.ext.registerStringConfig(ext, "深度", "0");
   
-  // === 新增：系统级独立动态锚定项 ===
+  // === 系统级独立动态锚定项 ===
   seal.ext.registerStringConfig(ext, "固定角色设定", "");
   seal.ext.registerStringConfig(ext, "固定角色设定深度", "0");
 
@@ -330,7 +329,6 @@ if (!seal.ext.find("openai动态兼容插件")) {
 
       let dynamicClone = JSON.parse(JSON.stringify(originalDynamic));
       
-      // 提前声明待插入的数据栈
       const anchorsInsertion = [];
 
       if (!pConfig.systemPrompt) {
@@ -340,14 +338,12 @@ if (!seal.ext.find("openai动态兼容插件")) {
                                : this.config.fixedAnchors[d];
           
           if (fixedContent && fixedContent.trim() !== "") {
-            // 解析随机数
             let parsedAnchor = fixedContent.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
             
-            // 计算插入层级：d=0插入在最新的一轮（底部），d=1往上一轮，以此类推
             let targetIndex = dynamicClone.length - d;
             if (targetIndex < 0) targetIndex = 0; 
             
-            // 将锚定项转为独立的 System 角色存入插入队列，不再污染用户/AI的历史气泡
+            // 锚定项角色配置
             anchorsInsertion.push({
               index: targetIndex,
               messages: [{ role: "system", content: parsedAnchor, _type: `fixed_anchor_${d}` }]
@@ -755,12 +751,12 @@ if (!seal.ext.find("openai动态兼容插件")) {
           }
       }
 
-      // 执行纯净化：绝不留占位符，直接抹除
+      // 纯净化：不留占位符直接抹除
       let cleanedMarkdown = markdown;
       for (const str of stringsToRemove) {
           cleanedMarkdown = cleanedMarkdown.replace(str, ''); 
       }
-      // HTML的 <img> 标签对 LLM 文本理解毫无帮助且易带入垃圾，直接无差别干掉
+      // 去除HTML的 <img> 标签污染正则
       cleanedMarkdown = cleanedMarkdown.replace(/<img[^>]+>/ig, ""); 
 
       return {
@@ -879,7 +875,7 @@ if (!seal.ext.find("openai动态兼容插件")) {
                   // 将高分的高质量图片提取用于 Vision 挂载
                   topImages.forEach(img => webImages.push(img.url));
                   
-                  // 存入 pageContents 的是已经被严格净化、没有任何垃圾 Alt 和 HTML 占位符的文本
+                  // 存入 pageContents 的是已经被严格净化、没有垃圾占位符的文本
                   pageContents += `\n${cleanedMarkdown}\n`; 
               }
           });
