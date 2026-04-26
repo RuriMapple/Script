@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         openai动态兼容插件
-// @description  支持动态配置锚定和角色卡锁定的OpenAI兼容插件(含独立自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
+// @name         open-ai-rp
+// @description  OpenAI兼容插件
 // @version      1.9.93
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/open-ai.js
@@ -8,7 +8,7 @@
 // @license      MIT
 // ==/UserScript==
 
-if (!seal.ext.find("openai动态兼容插件")) {
+if (!seal.ext.find("open-ai-rp")) {
   const ext = seal.ext.new("openai动态兼容插件", "Sy", "1.9.93"); 
   seal.ext.register(ext);
   
