@@ -3,7 +3,7 @@
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
 // @version      1.9.93
 // @author       Sy
-// @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/open-ai.js
+// @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/ai-rp.js
 // @timestamp    2026-4-26
 // @license      MIT
 // ==/UserScript==
