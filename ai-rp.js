@@ -2260,7 +2260,7 @@ session.addDynamicMessage("user", processedText, null, userId);
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               
-              // 兼容 SealDice 引擎：不支持 getReader，必须阻塞使用 .text() 接收完整流数据
+              // 阻塞接收完整流数据
               const text = await response.text();
               
               // 强行打断判定
@@ -2268,7 +2268,6 @@ session.addDynamicMessage("user", processedText, null, userId);
               
               const lines = text.split("\n");
               let safeBuffer = "";
-              let debugStreamBuffer = ""; 
               
               for (const line of lines) {
                   if (line.startsWith("data: ")) {
@@ -2279,26 +2278,9 @@ session.addDynamicMessage("user", processedText, null, userId);
                           const delta = data.choices[0]?.delta;
                           if (delta?.content) {
                               safeBuffer += delta.content;
-                              // === 调试模式：按分隔符模拟流式打印 ===
-                              if (debugMode) {
-                                  debugStreamBuffer += delta.content;
-                                  const sepRegex = /\\f|\f|\n/;
-                                  if (sepRegex.test(debugStreamBuffer)) {
-                                      let parts = debugStreamBuffer.split(sepRegex);
-                                      debugStreamBuffer = parts.pop();
-                                      for (let p of parts) {
-                                          if (p.trim()) console.log(`[调试模式: 流式生成片段] ${p.trim()}`);
-                                      }
-                                  }
-                              }
                           }
                       } catch (e) {}
                   }
-              }
-              
-              // 打印最后剩余在缓冲区的语句
-              if (debugMode && debugStreamBuffer.trim()) {
-                  console.log(`[调试模式: 流式生成片段] ${debugStreamBuffer.trim()}`);
               }
               contentObj.text = safeBuffer;
           } else {
@@ -2460,4 +2442,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-      }
+          }
