@@ -590,12 +590,14 @@ if (!seal.ext.find("AI-role")) {
     recordSessionActivity(sessionKey);
   }
 
-  function filterContent(originalContent) {
+function filterContent(originalContent) {
     if (typeof originalContent !== 'string') {
         return { filteredContent: originalContent, thinkingContent: [], codeBlocks: [], pureText: originalContent };
     }
     
     let thinkingContent = [];
+    let codeBlocks = [];
+    
     let filteredContent = originalContent
       .replace(/<([a-zA-Z][a-zA-Z0-9_-]*)>([\s\S]*?)<\/\1>/g, (match, tag, inner) => {
         thinkingContent.push(inner.trim());
@@ -610,7 +612,7 @@ if (!seal.ext.find("AI-role")) {
     pureText = pureText.replace(/data:image\/[^;]+;base64,[^\s"'\)\]]+/g, "");
       
     return { filteredContent, thinkingContent, codeBlocks, pureText };
-  }
+}
 
   function isSupportedImageFormat(urlOrBase64) {
       let checkStr = urlOrBase64;
@@ -2453,4 +2455,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-         }
+}
