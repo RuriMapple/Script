@@ -2340,7 +2340,7 @@ session.addDynamicMessage("user", processedText, null, userId);
       if (finalError) throw finalError;
 
       if (debugMode) console.log("[主干AI原始回复]:\n" + replyContent);
-      const { filteredContent } = filterContent(replyContent); 
+      const { filteredContent, codeBlocks } = filterContent(replyContent); 
       let safeContent = filteredContent;
 
       let displayReply = "";
@@ -2453,4 +2453,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-                  }
+         }
