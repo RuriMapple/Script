@@ -1588,6 +1588,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         { on: "开启向知识库推送模组", off: "关闭向知识库推送模组", key: "pushModuleToKB", label: "向知识库推送模组" },
         { on: "开启知识库同步", off: "关闭知识库同步", key: "enableKBSync", label: "知识库同步" },
         { on: "开启知识库检索", off: "关闭知识库检索", key: "enableKBQuery", label: "知识库检索" },
+        { on: "关闭识别码", off: "开启识别码", key: "filterIdEnabled", label: "识别码过滤" }
       ];
       
       for (const toggle of toggleCommands) {
@@ -2455,4 +2456,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-}
+                  }
