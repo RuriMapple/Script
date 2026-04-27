@@ -2247,56 +2247,52 @@ if (loadModuleMatch) {
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               
-              const reader = response.body.getReader();
-              const decoder = new TextDecoder();
-              let done = false;
+              // 兼容 SealDice 引擎：不支持 getReader，必须阻塞使用 .text() 接收完整流数据
+              const text = await response.text();
+              
+              // 强行打断判定
+              if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
+              
+              const lines = text.split("\n");
               let safeBuffer = "";
               let debugStreamBuffer = ""; 
               
-              while (!done) {
-                  const { value, done: readerDone } = await reader.read();
-                  if (readerDone) break;
-                  const chunk = decoder.decode(value, { stream: true });
-                  const lines = chunk.split("\n");
-                  for (const line of lines) {
-                      if (line.startsWith("data: ")) {
-                          const jsonStr = line.slice(6);
-                          if (jsonStr.trim() === "[DONE]") continue;
-                          try {
-                              const data = JSON.parse(jsonStr);
-                              const delta = data.choices[0]?.delta;
-                              if (delta?.content) {
-                                  safeBuffer += delta.content;
-                                  if (debugMode) {
-                                      debugStreamBuffer += delta.content;
-                                      const sepRegex = /\\f|\f|\n/;
-                                      if (sepRegex.test(debugStreamBuffer)) {
-                                          let parts = debugStreamBuffer.split(sepRegex);
-                                          debugStreamBuffer = parts.pop();
-                                          for (let p of parts) {
-                                              if (p.trim()) console.log(`[调试模式: 流式实时生成片段] ${p.trim()}`);
-                                          }
+              for (const line of lines) {
+                  if (line.startsWith("data: ")) {
+                      const jsonStr = line.slice(6);
+                      if (jsonStr.trim() === "[DONE]") continue;
+                      try {
+                          const data = JSON.parse(jsonStr);
+                          const delta = data.choices[0]?.delta;
+                          if (delta?.content) {
+                              safeBuffer += delta.content;
+                              // === 调试模式：按分隔符模拟流式打印 ===
+                              if (debugMode) {
+                                  debugStreamBuffer += delta.content;
+                                  const sepRegex = /\\f|\f|\n/;
+                                  if (sepRegex.test(debugStreamBuffer)) {
+                                      let parts = debugStreamBuffer.split(sepRegex);
+                                      debugStreamBuffer = parts.pop();
+                                      for (let p of parts) {
+                                          if (p.trim()) console.log(`[调试模式: 流式生成片段] ${p.trim()}`);
                                       }
                                   }
                               }
-                          } catch (e) {}
-                      }
-                  }
-                  // 使用自定义打断逻辑兼容旧版引擎
-                  if (signal && signal.aborted) { 
-                      reader.cancel(); 
-                      let e = new Error("aborted"); e.name = "AbortError"; throw e; 
+                          }
+                      } catch (e) {}
                   }
               }
+              
+              // 打印最后剩余在缓冲区的语句
               if (debugMode && debugStreamBuffer.trim()) {
-                  console.log(`[调试模式: 流式实时生成片段] ${debugStreamBuffer.trim()}`);
+                  console.log(`[调试模式: 流式生成片段] ${debugStreamBuffer.trim()}`);
               }
               contentObj.text = safeBuffer;
           } else {
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               
-              // 非流式下，即使原生 fetch 没打断，拿到结果后我们也强行抛弃
+              // 非流式打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
               
               const data = await response.json();
@@ -2451,4 +2447,4 @@ if (loadModuleMatch) {
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-                                       }
+    }
