@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenAI兼容
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
-// @version      1.9.94
+// @version      1.9.95
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/ai-rp.js
 // @timestamp    2026-4-26
@@ -9,7 +9,7 @@
 // ==/UserScript==
 
 if (!seal.ext.find("AI-role")) {
-  const ext = seal.ext.new("AI-role", "Sy", "1.9.94"); 
+  const ext = seal.ext.new("AI-role", "Sy", "1.9.95"); 
   seal.ext.register(ext);
   
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
