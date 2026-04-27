@@ -2451,4 +2451,4 @@ if (loadModuleMatch) {
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-}
+                                       }
