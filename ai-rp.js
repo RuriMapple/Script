@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenAI兼容
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
-// @version      1.9.96
+// @version      1.9.97
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/ai-rp.js
 // @timestamp    2026-4-26
@@ -9,7 +9,7 @@
 // ==/UserScript==
 
 if (!seal.ext.find("AI-role")) {
-  const ext = seal.ext.new("AI-role", "Sy", "1.9.96"); 
+  const ext = seal.ext.new("AI-role", "Sy", "1.9.97"); 
   seal.ext.register(ext);
   
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
@@ -2285,7 +2285,7 @@ session.addDynamicMessage("user", processedText, null, userId);
               contentObj.text = safeBuffer;
           } else {
               const response = await fetch(apiUrl, fetchOptions);
-              if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
+              if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`✧ 流式模式API错误: ${errData.error?.message || response.statusText}`); }
               
               // 非流式打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
