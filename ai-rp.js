@@ -2330,7 +2330,7 @@ if (text === "重新生成") {
               contentObj.text = safeBuffer;
           } else {
               const response = await fetch(apiUrl, fetchOptions);
-              if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`✧ 流式模式API错误: ${errData.error?.message || response.statusText}`); }
+              if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`✧ API错误: ${errData.error?.message || response.statusText}`); }
               
               // 非流式打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
