@@ -912,7 +912,7 @@ async function syncModule(session, dynConfig) {
       
       if (allUrls.length > 0) {
           seal.replyToSender(ctx, msg, `✧ 正在抓取 ${allUrls.length} 个网页内容 ...`);
-          let pageContents = "[实时网络检索结果]: 参考网页内容";
+          let pageContents = "[实时网络检索结果]: 参考网页";
           let hasNewContent = false;
           let webImages = []; 
 
