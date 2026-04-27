@@ -1994,9 +1994,23 @@ if (text === "重新生成") {
           session.lockGeneration(controller);
           try {
               await syncModule(session, dynamicConfig);
+              
+              // --- 修复：重新生成时补全缺失的上下文任务 (使其调用公开API进行RAG/联网检索) ---
+              const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
+              if (lastMsg && lastMsg.role === 'user') {
+                  let processedText = lastMsg.content;
+                  if (typeof processedText === 'string') {
+                      // 过滤掉可能存在的身份识别码前缀，以免影响向量检索质量
+                      processedText = processedText.replace(/^\(.*?\)\s*/, ""); 
+                  }
+                  await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
+              }
+              // -------------------------------------------------------------------------
+
               syncToKnowledgeBase(session, dynamicConfig, sessionKey);
 
               const payload = session.buildPayload();
+
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
 
               session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
@@ -2012,8 +2026,9 @@ if (text === "重新生成") {
           return;
       }
 
-      if (/^删除轮数(\d+)$/i.test(text)) {
-          const roundsToDelete = parseInt(RegExp.$1, 10);
+      const deleteMatch = text.match(/^删除轮数\s*(\d+)$/i);
+      if (deleteMatch) {
+          const roundsToDelete = parseInt(deleteMatch[1], 10);
           let session = getSession(sessionKey);
           if (isNaN(roundsToDelete) || roundsToDelete <= 0) return seal.replyToSender(ctx, msg, "✧ 无效轮数");
           
@@ -2051,8 +2066,9 @@ if (text === "重新生成") {
           return;
       }
 
-      if (/^显示轮数(\d+)$/i.test(text)) {
-          const roundsToShow = parseInt(RegExp.$1, 10);
+      const showMatch = text.match(/^显示轮数\s*(\d+)$/i);
+      if (showMatch) {
+          const roundsToShow = parseInt(showMatch[1], 10);
           let session = getSession(sessionKey);
           if (isNaN(roundsToShow) || roundsToShow <= 0) return seal.replyToSender(ctx, msg, "✧ 无效轮数");
           if (session.dynamicContent.length === 0) return seal.replyToSender(ctx, msg, "没有可显示的对话内容");
@@ -2442,4 +2458,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-          }
+    }
