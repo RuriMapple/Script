@@ -349,12 +349,10 @@ if (!seal.ext.find("AI-role")) {
 
       let dynamicClone = JSON.parse(JSON.stringify(originalDynamic));
       
-const anchorsInsertion = [];
+      const anchorsInsertion = [];
 
-      const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
-      const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
-      anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
-
+      // 第一步：【最高优先级】处理固定角色设定和自定义锚定项
+      // 只有在没设置“系统提示”指令时，才加载全局的固定设定
       if (!pConfig.systemPrompt) {
         const hasRoleSetting = this.config.fixedRoleSetting && this.config.fixedRoleSetting.trim() !== "";
         const fictionRole = this.anchor.fictionRoleHistory || [];
@@ -379,10 +377,8 @@ const anchorsInsertion = [];
           
           if (fixedContent && fixedContent.trim() !== "") {
             let parsedAnchor = fixedContent.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
-            
             let targetIndex = dynamicClone.length - d;
             if (targetIndex < 0) targetIndex = 0;
-            
             anchorsInsertion.push({
               index: targetIndex,
               messages: [{ role: "system", content: parsedAnchor, _type: `fixed_anchor_${d}` }]
@@ -390,6 +386,13 @@ const anchorsInsertion = [];
           }
         }
       }
+
+      // 第二步：【次高优先级】处理模组、角色卡、上下文合并组 (anchorGroup)
+      // 这一步确保模组紧跟在角色设定后面，而不是抢在它前面
+      const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
+      const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
+      anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
+
       
       const anchorsMap = new Map();
       anchorsInsertion.forEach((item) => {
@@ -2458,4 +2461,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-    }
+                      }
