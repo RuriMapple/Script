@@ -1500,7 +1500,7 @@ async function syncModule(session, dynConfig) {
         const formatMasked = (val) => (val !== null && val !== undefined && val !== "") ? "◈已配置◈" : "未配置";
         const formatFilterId = (val) => {
           if (val === null || val === undefined) return "未配置";
-          return val ? "关闭识别码" : "开启识别码";
+          return val ? "关闭" : "开启";
         };
 
         let msgStr = `当前环境个人配置状态：
