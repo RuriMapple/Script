@@ -1399,7 +1399,7 @@ const scrapeResults = rawContents.map((content, index) => {
                              .trim();
           }
         } else {
-          if (!isFullExport) { const { pureText } = filterContent(content); content = pureText; }
+          if (!isFullExport) { const { filteredContent } = filterContent(content); content = filteredContent; }
         }
         
         content = content.replace(/\\f|\f/g, "").replace(/\\n/g, "\n").trim();
@@ -1978,9 +1978,13 @@ if (loadModuleMatch) {
           return;
       }
 
-if (text === "重新生成") {
+      if (text === "重新生成") {
           let session = getSession(sessionKey);
           if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
+
+          // [防御核心 1]：创建深拷贝快照，用于应对 API 请求失败时的数据回滚，避免残缺状态持久化
+          const backupDynamic = JSON.parse(JSON.stringify(session.dynamicContent));
+          const backupFullHistory = JSON.parse(JSON.stringify(session.fullHistory));
 
           if (session.isGenerating && session.abortController) {
               session.abortController.abort();
@@ -1988,14 +1992,11 @@ if (text === "重新生成") {
               await new Promise(r => setTimeout(r, 200));
           }
 
-          let lastAiIdx = -1;
-          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
-              if (session.dynamicContent[i].role === 'assistant') { lastAiIdx = i; break; }
-          }
+          // [防御核心 2]：严格进行末尾校验，抛弃原有的倒序遍历，彻底杜绝快速连点导致的历史越界穿透
+          const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
 
-          if (lastAiIdx !== -1) {
-              const deletedMsg = session.dynamicContent[lastAiIdx];
-              session.dynamicContent.splice(lastAiIdx, 1);
+          if (lastMsg && lastMsg.role === 'assistant') {
+              const deletedMsg = session.dynamicContent.pop();
               for (let i = session.fullHistory.length - 1; i >= 0; i--) {
                   if (session.fullHistory[i]._type === 'dynamic' && session.fullHistory[i].role === 'assistant' && session.fullHistory[i].timestamp === deletedMsg.timestamp) {
                       session.fullHistory.splice(i, 1);
@@ -2003,12 +2004,50 @@ if (text === "重新生成") {
                   }
               }
               rollbackStatusBar(session, dynamicConfig);
-          } else {
-              const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
-              if (!lastMsg || lastMsg.role !== 'user') {
-                  seal.replyToSender(ctx, msg, "✧ 没有找到可重新生成的回复");
-                  return;
+          } else if (!lastMsg || lastMsg.role !== 'user') {
+              seal.replyToSender(ctx, msg, "✧ 没有找到可重新生成的回复");
+              return;
+          }
+
+          const controller = createAbortController();
+          session.lockGeneration(controller);
+          try {
+              await syncModule(session, dynamicConfig);
+              
+              // 补全缺失的上下文任务 (使其调用公开API进行RAG/联网检索)
+              const currentUserMsg = session.dynamicContent[session.dynamicContent.length - 1];
+              if (currentUserMsg && currentUserMsg.role === 'user') {
+                  let processedText = currentUserMsg.content;
+                  if (typeof processedText === 'string') {
+                      processedText = processedText.replace(/^\(.*?\)\s*/, ""); 
+                  }
+                  await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
               }
+
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+
+              const payload = session.buildPayload();
+              const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
+
+              session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+              updateSession(sessionKey, session);
+              await updateStatusBar(session, result.originalReply, dynamicConfig);
+          } catch (error) {
+              if (error.name === 'AbortError' || error.message.includes('aborted')) {
+                  // 用户主动中止，不进行回滚，保留当前截断状态
+              } else {
+                  // [防御核心 3]：遇到网络或 API 异常，执行硬回滚，恢复到重新生成前的健康状态
+                  session.dynamicContent = backupDynamic;
+                  session.fullHistory = backupFullHistory;
+                  rollbackStatusBar(session, dynamicConfig);
+                  seal.replyToSender(ctx, msg, `✧ 重新生成失败，已自动回滚: ${error.message}`);
+              }
+          } finally {
+              session.unlockGeneration();
+              updateSession(sessionKey, session);
+          }
+          return;
+      }
           }
 
           const controller = createAbortController();
