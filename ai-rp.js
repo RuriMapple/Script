@@ -235,6 +235,10 @@ if (!seal.ext.find("AI-role")) {
       this.ragContext = null; 
       this.webSearchContext = null; 
       
+      this.isGenerating = false;
+      this.abortController = null;
+      this.pendingUserMessages = [];
+
       this.personalConfig = { 
   apiUrl: null, apiKey: null, modelName: null, 
   pureModeEnabled: null, useReply: null, enableStream: null,
@@ -480,7 +484,18 @@ const anchorsInsertion = [];
       this.ragContext = data.ragContext || null;
       this.webSearchContext = data.webSearchContext || null;
     }
+    
+    lockGeneration(controller) {
+      this.isGenerating = true;
+      this.abortController = controller;
+    }
+
+    unlockGeneration() {
+      this.isGenerating = false;
+      this.abortController = null;
+    }
   }
+
 
   const sessions = new Map();
   const dynamicConfig = new DynamicConfig(ext);
@@ -1090,7 +1105,7 @@ async function syncModule(session, dynConfig) {
 
                   if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
                       messagesContext.push(msgObj);
-                      for (let tc of msgObj.tool_calls) {
+                      for (let tc of msg.tool_calls) {
                           if (["web_search", "google_search"].includes(tc.function.name)) {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
                               if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
@@ -1101,7 +1116,7 @@ async function syncModule(session, dynConfig) {
                           }
                       }
                   } else {
-                      finalOutput = msgObj.content || "";
+                      finalOutput = msg.content || "";
                       success = true;
                       break;
                   }
@@ -1885,177 +1900,291 @@ if (loadModuleMatch) {
     }
 }
 
+      if (/^(中止生成|停止生成)$/i.test(text)) {
+          let session = getSession(sessionKey);
+          if (session.isGenerating && session.abortController) {
+              session.abortController.abort();
+          }
+          session.unlockGeneration();
+          seal.replyToSender(ctx, msg, "✧ 已中止生成，锁已解除");
+          return;
+      }
+
+      if (/^继续生成$/i.test(text)) {
+          let session = getSession(sessionKey);
+          if (session.dynamicContent.length === 0) return;
+          const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
+          if (lastMsg.role !== 'assistant') {
+              seal.replyToSender(ctx, msg, "✧ 当前最后角色不是AI，无法继续生成");
+              return;
+          }
+          if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
+          
+          const controller = new AbortController();
+          session.lockGeneration(controller);
+          try {
+              const payload = session.buildPayload();
+              const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
+              
+              lastMsg.content += result.originalReply;
+              lastMsg.filteredContent = lastMsg.filteredContent 
+                  ? lastMsg.filteredContent + result.filteredReply 
+                  : result.filteredReply;
+                  
+              const fullMsg = session.fullHistory.find(m => 
+                  m._type === 'dynamic' && m.timestamp === lastMsg.timestamp && m.role === 'assistant');
+              if (fullMsg) {
+                  fullMsg.content = lastMsg.content;
+                  fullMsg.filteredContent = lastMsg.filteredContent;
+              }
+              
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+              updateSession(sessionKey, session);
+              await updateStatusBar(session, lastMsg.content, dynamicConfig);
+          } catch (error) {
+              if (error.name === 'AbortError' || error.message.includes('aborted')) return;
+              seal.replyToSender(ctx, msg, `✧ 继续生成失败: ${error.message}`);
+          } finally {
+              session.unlockGeneration();
+              updateSession(sessionKey, session);
+          }
+          return;
+      }
+
       if (text === "重新生成") {
-        let session = getSession(sessionKey);
-        if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
-        const lastDynamicMessage = session.dynamicContent.length > 0 ? session.dynamicContent[session.dynamicContent.length - 1] : null;
-
-        let lastUserMsgText = "";
-
-        if (lastDynamicMessage?.role === "user") {
-          lastUserMsgText = lastDynamicMessage.content;
-        } else {
-          let lastAIReplyIndex = -1;
-          for (let i = session.dynamicContent.length - 1; i >= 0; i--) { if (session.dynamicContent[i].role === "assistant") { lastAIReplyIndex = i; break; } }
-          if (lastAIReplyIndex === -1) return seal.replyToSender(ctx, msg, "✧ 没有找到可重新生成的回复");
+          let session = getSession(sessionKey);
+          if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
           
-          const deletedMessages = session.dynamicContent.splice(lastAIReplyIndex, 1);
-          for (let i = session.fullHistory.length - 1; i >= 0 && deletedMessages.length > 0; i--) { if (session.fullHistory[i]._type === "dynamic" && session.fullHistory[i].content === deletedMessages[0].content) { session.fullHistory.splice(i, 1); break; } }
+          let lastAiIdx = -1;
+          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+              if (session.dynamicContent[i].role === 'assistant') { lastAiIdx = i; break; }
+          }
+          if (lastAiIdx === -1) { seal.replyToSender(ctx, msg, "✧ 没有找可重新生成的回复"); return; }
           
+          const deletedMsg = session.dynamicContent[lastAiIdx];
+          session.dynamicContent.splice(lastAiIdx, 1);
+          for (let i = session.fullHistory.length - 1; i >= 0; i--) {
+              if (session.fullHistory[i]._type === 'dynamic' && session.fullHistory[i].role === 'assistant' && session.fullHistory[i].timestamp === deletedMsg.timestamp) {
+                  session.fullHistory.splice(i, 1);
+                  break;
+              }
+          }
           rollbackStatusBar(session, dynamicConfig);
           
-          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
-            if (session.dynamicContent[i].role === "user") {
-              lastUserMsgText = session.dynamicContent[i].content;
-              break;
-            }
+          const controller = new AbortController();
+          session.lockGeneration(controller);
+          try {
+              await syncModule(session, dynamicConfig);
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey); 
+              
+              const payload = session.buildPayload();
+              const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
+              
+              session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+              updateSession(sessionKey, session);
+              await updateStatusBar(session, result.originalReply, dynamicConfig);
+          } catch (error) {
+              if (error.name === 'AbortError' || error.message.includes('aborted')) return;
+              seal.replyToSender(ctx, msg, `✧ 重新生成失败: ${error.message}`);
+          } finally {
+              session.unlockGeneration();
+              updateSession(sessionKey, session);
           }
-        }
-
-if (lastUserMsgText) {
-             let rawUserText = lastUserMsgText;
-             if (typeof rawUserText === 'string') {
-                 rawUserText = rawUserText.replace(/^\(QQ:\d+\)\s*/i, "").replace(/^\(.*?\)\s*/, "");
-             }
-             await syncModule(session, dynamicConfig); 
-             await executeContextTasks(session, rawUserText, userId, sessionKey, dynamicConfig, ctx, msg);
-        }
-
-        syncToKnowledgeBase(session, dynamicConfig, sessionKey); 
-        
-        try {
-          const payload = session.buildPayload();
-          const result = await sendOpenAIRequest(payload, ctx, msg, session);
-          session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
-
-          // 修复：生成完回复后，立马先存一次盘，确保上下文记忆绝对不会丢！
-          updateSession(sessionKey, session); 
-
-          // 然后再去慢慢请求状态栏
-          await updateStatusBar(session, result.originalReply, dynamicConfig);
-
-          // 状态栏生成完毕并更新了锚定项后，再覆盖保存一次配置
-          updateSession(sessionKey, session); 
-
-        } catch (error) { seal.replyToSender(ctx, msg, `✧ 重新生成失败: ${error.message}`); }
-        return;
+          return;
       }
-      
-      if (text.match(/^删除轮数(\d+)$/)) {
-        const rounds = parseInt(text.match(/^删除轮数(\d+)$/)[1], 10);
-        if (isNaN(rounds) || rounds <= 0) return seal.replyToSender(ctx, msg, `✧ 非有效轮数`);
-        let session = getSession(sessionKey);
-        if (session.dynamicContent.length === 0) return seal.replyToSender(ctx, msg, `✧ 无可删除对话内容`);
-        const messagesToDelete = rounds * 2;
-        const actualDelete = Math.min(messagesToDelete, session.dynamicContent.length);
-        session.dynamicContent.splice(session.dynamicContent.length - actualDelete);
-        let deleted = 0;
-        for (let i = session.fullHistory.length - 1; i >= 0 && deleted < actualDelete; i--) { if (session.fullHistory[i]._type === "dynamic") { session.fullHistory.splice(i, 1); deleted++; } }
-        
-        session.webSearchContext = null;
-        session.ragContext = null;
-rollbackStatusBar(session, dynamicConfig);
-        
-        updateSession(sessionKey, session); 
-        seal.replyToSender(ctx, msg, `✧ 成功删除「 ${Math.floor(actualDelete / 2)} 」轮对话 已清理关联网页缓存与知识库下挂`);
-        return;
-      }
-      
-      if (text.match(/^显示轮数(\d+)$/)) {
-        const rounds = parseInt(text.match(/^显示轮数(\d+)$/)[1], 10);
-        if (isNaN(rounds) || rounds <= 0) return seal.replyToSender(ctx, msg, `✧ 非有效轮数`);
-        let session = getSession(sessionKey); 
-        if (session.dynamicContent.length === 0) return seal.replyToSender(ctx, msg, `没有可显示的对话内容`);
-        const messagesToShow = rounds * 2;
-        const actualShow = Math.min(messagesToShow, session.dynamicContent.length);
-        const recentMessages = session.dynamicContent.slice(session.dynamicContent.length - actualShow);
-        let formattedHistory = `✧ 最近${Math.ceil(actualShow / 2)}轮对话记录\n\n`;
-        for (let i = 0; i < recentMessages.length; i++) {
-          const message = recentMessages[i];
-          const roleLabel = message.role === "user" ? "调查员" : "Owen";
-          let contentToShow = message.filteredContent || message.content;
+
+      if (/^删除轮数(\d+)$/i.test(text)) {
+          const roundsToDelete = parseInt(RegExp.$1, 10);
+          let session = getSession(sessionKey);
+          if (isNaN(roundsToDelete) || roundsToDelete <= 0) return seal.replyToSender(ctx, msg, "✧ 无效轮数");
           
-          if (typeof contentToShow === 'string') {
-              // 此处仅用于展示，并非发送给大模型，故保留视觉呈现
-              contentToShow = contentToShow.replace(/\[IMG:[^\]]+\]/g, "[图片]");
-              contentToShow = contentToShow.replace(/\\f|\f/g, "").replace(/\\n/g, "\n").trim();
-          } else {
-              contentToShow = "[多模态内容]";
+          const aiCount = session.dynamicContent.filter(m => m.role === 'assistant').length;
+          if (aiCount === 0) return seal.replyToSender(ctx, msg, "✧ 无对话可删除");
+          const deleteRounds = Math.min(roundsToDelete, aiCount);
+          
+          for (let r = 0; r < deleteRounds; r++) {
+              let lastIdx = -1;
+              for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+                  if (session.dynamicContent[i].role === 'assistant') { lastIdx = i; break; }
+              }
+              if (lastIdx === -1) break;
+              
+              session.dynamicContent.splice(lastIdx, 1);
+              while (lastIdx - 1 >= 0 && session.dynamicContent[lastIdx - 1].role === 'user') {
+                  session.dynamicContent.splice(lastIdx - 1, 1);
+                  lastIdx--;
+              }
           }
-          formattedHistory += `${roleLabel}：${contentToShow}\n\n`;
-        }
-        seal.replyToSender(ctx, msg, formattedHistory);
-        return;
+          
+          session.fullHistory = session.fullHistory.filter(m => 
+              m._type !== 'dynamic' || session.dynamicContent.some(d => d.timestamp === m.timestamp && d.role === m.role));
+              
+          session.webSearchContext = null;
+          session.ragContext = null;
+          rollbackStatusBar(session, dynamicConfig);
+          
+          if (session.isGenerating && session.abortController) {
+              session.abortController.abort();
+          }
+          session.unlockGeneration();
+          updateSession(sessionKey, session);
+          seal.replyToSender(ctx, msg, `✧ 已删除「 ${deleteRounds} 」轮对话 已清理关联网页缓存与知识库下挂`);
+          return;
+      }
+
+      if (/^显示轮数(\d+)$/i.test(text)) {
+          const roundsToShow = parseInt(RegExp.$1, 10);
+          let session = getSession(sessionKey);
+          if (isNaN(roundsToShow) || roundsToShow <= 0) return seal.replyToSender(ctx, msg, "✧ 无效轮数");
+          if (session.dynamicContent.length === 0) return seal.replyToSender(ctx, msg, "没有可显示的对话内容");
+          
+          const displayRounds = [];
+          let remaining = roundsToShow;
+          let msgs = [...session.dynamicContent]; 
+          
+          while (remaining > 0 && msgs.length > 0) {
+              let aiIdx = -1;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                  if (msgs[i].role === 'assistant') { aiIdx = i; break; }
+              }
+              if (aiIdx === -1) break;
+              
+              let start = aiIdx;
+              while (start - 1 >= 0 && msgs[start - 1].role === 'user') start--;
+              const roundMsgs = msgs.slice(start, aiIdx + 1);
+              displayRounds.unshift(roundMsgs); 
+              msgs.splice(start, roundMsgs.length);
+              remaining--;
+          }
+          
+          let formattedHistory = `✧ 最近${displayRounds.length}轮对话记录\n\n`;
+          for (let r = 0; r < displayRounds.length; r++) {
+              const round = displayRounds[r];
+              for (const msg of round) {
+                  const roleLabel = msg.role === 'user' ? "调查员" : "Owen";
+                  let contentToShow = msg.filteredContent || msg.content;
+                  if (typeof contentToShow === 'string') {
+                      contentToShow = contentToShow.replace(/\[IMG:[^\]]+\]/g, "[图片]").replace(/\\f|\f/g, "").replace(/\\n/g, "\n").trim();
+                  } else {
+                      contentToShow = "[多模态内容]";
+                  }
+                  formattedHistory += `${roleLabel}：${contentToShow}\n\n`;
+              }
+          }
+          seal.replyToSender(ctx, msg, formattedHistory);
+          return;
       }
 
       let isPrimaryTrigger = dynamicConfig.triggerWord && text.includes(dynamicConfig.triggerWord);
       let isOtherTrigger = !isPrimaryTrigger && dynamicConfig.otherTriggerWords.length > 0 && dynamicConfig.otherTriggerWords.some(word => text.includes(word));
 
       if (ctx.isPrivate || isPrimaryTrigger || isOtherTrigger) {
-        let session = getSession(sessionKey); 
-        if (!checkAPIConfig(session, true)) return seal.replyToSender(ctx, msg, "✧ 未配置API，发送『AI手册』查看配置教程");
-        let isPureMode = (session.personalConfig.pureModeEnabled !== null && session.personalConfig.pureModeEnabled !== undefined) ? session.personalConfig.pureModeEnabled : dynamicConfig.pureModeEnabled;
-        let processedText = (isPureMode && isPrimaryTrigger) ? text.replace(dynamicConfig.triggerWord, "").trim() : text;
-        let isEnableImage = (session.personalConfig.enableImage !== null && session.personalConfig.enableImage !== undefined) ? session.personalConfig.enableImage : dynamicConfig.enableImage;
+          let session = getSession(sessionKey); 
+          if (!checkAPIConfig(session, true)) return seal.replyToSender(ctx, msg, "✧ 未配置API，发送『AI手册』查看配置教程");
+          
+          let isPureMode = (session.personalConfig.pureModeEnabled !== null && session.personalConfig.pureModeEnabled !== undefined) ? session.personalConfig.pureModeEnabled : dynamicConfig.pureModeEnabled;
+          let processedText = (isPureMode && isPrimaryTrigger) ? text.replace(dynamicConfig.triggerWord, "").trim() : text;
 
-        const cqImgRegex = /\[CQ:image,[^\]]*(?:url|file)=(https?:\/\/[^,\]]+)[^\]]*\]/g;
-        const cqImgFallbackRegex = /\[CQ:image,[^\]]*\]/g;
-
-        // ====== 彻底剔除所有占位符的硬过滤处理 ======
-        if (isEnableImage) {
-          processedText = processedText.replace(cqImgRegex, (match, url) => {
-              let cleanUrl = url.replace(/&amp;/g, '&');
-              return `[IMG:${cleanUrl}]`;
-          });
-          // 直接抹除，防止污染
-          processedText = processedText.replace(cqImgFallbackRegex, "");
-
-          const imgUrlMatches = [...processedText.matchAll(/\[IMG:(https?:\/\/[^\]]+)\]/g)];
-          for (const imgMatch of imgUrlMatches) {
-            const rawUrl = imgMatch[1];
-            const b64 = await fetchImageToBase64(rawUrl);
-            if (b64) {
-              processedText = processedText.replace(imgMatch[0], `[IMG:${b64}]`);
-            } else {
-              // 转码失败时，不要留着失效直链，直接抹除
-              processedText = processedText.replace(imgMatch[0], "");
-            }
+          if (session.isGenerating) {
+              session.pendingUserMessages.push({
+                  role: 'user',
+                  content: processedText,
+                  filteredContent: null,
+                  userId: userId,
+                  timestamp: Date.now()
+              });
+              return; 
           }
-        } else {
-          // 未开启图片识别时，无差别彻底清除所有图片信息
-          processedText = processedText.replace(cqImgRegex, "");
-          processedText = processedText.replace(cqImgFallbackRegex, "");
-        }
 
-processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
+          let isEnableImage = (session.personalConfig.enableImage !== null && session.personalConfig.enableImage !== undefined) ? session.personalConfig.enableImage : dynamicConfig.enableImage;
+          const cqImgRegex = /\[CQ:image,[^\]]*(?:url|file)=(https?:\/\/[^,\]]+)[^\]]*\]/g;
+          const cqImgFallbackRegex = /\[CQ:image,[^\]]*\]/g;
 
-        await syncModule(session, dynamicConfig);
-        await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
+          if (isEnableImage) {
+              processedText = processedText.replace(cqImgRegex, (match, url) => {
+                  let cleanUrl = url.replace(/&amp;/g, '&');
+                  return `[IMG:${cleanUrl}]`;
+              });
+              processedText = processedText.replace(cqImgFallbackRegex, "");
+              const imgUrlMatches = [...processedText.matchAll(/\[IMG:(https?:\/\/[^\]]+)\]/g)];
+              for (const imgMatch of imgUrlMatches) {
+                  const rawUrl = imgMatch[1];
+                  const b64 = await fetchImageToBase64(rawUrl);
+                  if (b64) {
+                      processedText = processedText.replace(imgMatch[0], `[IMG:${b64}]`);
+                  } else {
+                      processedText = processedText.replace(imgMatch[0], "");
+                  }
+              }
+          } else {
+              processedText = processedText.replace(cqImgRegex, "");
+              processedText = processedText.replace(cqImgFallbackRegex, "");
+          }
 
-        session.addDynamicMessage("user", processedText, null, userId);
+          processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
 
-        syncToKnowledgeBase(session, dynamicConfig, sessionKey); 
+          await syncModule(session, dynamicConfig);
+          await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
+          
+          session.addDynamicMessage("user", processedText, null, userId);
+          syncToKnowledgeBase(session, dynamicConfig, sessionKey);
 
-        try {
-          const payload = session.buildPayload();
-          const result = await sendOpenAIRequest(payload, ctx, msg, session); 
-          session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+          const controller = new AbortController();
+          session.lockGeneration(controller);
+          
+          try {
+              const payload = session.buildPayload();
+              const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
+              session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
 
-          // 【立刻存盘】：回复一出来就保存，确保就算状态栏炸了记忆也不丢
-          updateSession(sessionKey, session); 
-
-          // 然后再去请求状态栏
-          await updateStatusBar(session, result.originalReply, dynamicConfig);
-
-          // 状态栏如果有更新，再存一次覆盖
-          updateSession(sessionKey, session); 
-        } catch (error) { console.error("API请求失败:", error); }
-        return;
+              updateSession(sessionKey, session); 
+              await updateStatusBar(session, result.originalReply, dynamicConfig);
+              updateSession(sessionKey, session); 
+          } catch (error) { 
+              if (error.name !== 'AbortError' && !error.message.includes('aborted')) {
+                  console.error("API请求失败:", error); 
+              }
+          } finally {
+              session.unlockGeneration();
+              
+              while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
+                  const pendingSnapshot = [...session.pendingUserMessages];
+                  session.pendingUserMessages = []; 
+                  
+                  for (const pm of pendingSnapshot) {
+                      session.addDynamicMessage('user', pm.content, pm.filteredContent, pm.userId);
+                  }
+                  
+                  const subController = new AbortController();
+                  session.lockGeneration(subController);
+                  
+                  try {
+                      await syncModule(session, dynamicConfig);
+                      await executeContextTasks(session, pendingSnapshot[pendingSnapshot.length - 1].content, pendingSnapshot[pendingSnapshot.length - 1].userId, sessionKey, dynamicConfig, ctx, msg);
+                      
+                      const payload = session.buildPayload();
+                      const result = await sendOpenAIRequest(payload, ctx, msg, session, subController.signal);
+                      session.addDynamicMessage('assistant', result.originalReply, result.filteredReply);
+                      
+                      updateSession(sessionKey, session);
+                      await updateStatusBar(session, result.originalReply, dynamicConfig);
+                  } catch (error) {
+                      if (error.name !== 'AbortError' && !error.message.includes('aborted')) {
+                          console.error("暂存消息处理失败:", error);
+                      }
+                  } finally {
+                      session.unlockGeneration();
+                  }
+              }
+              updateSession(sessionKey, session);
+          }
+          return;
       }
+
     } catch (error) { console.error("✧ 处理错误 ", error); seal.replyToSender(ctx, msg, `✧ 处理失败: ${error.message}`); }
   }
 
-  async function sendOpenAIRequest(messages, ctx, msg, session) {
+  async function sendOpenAIRequest(messages, ctx, msg, session, signal) {
     try {
       const pConfig = session?.personalConfig || {};
       const apiUrl = pConfig.apiUrl || dynamicConfig.apiUrl;
@@ -2098,26 +2227,65 @@ processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.flo
       async function makeRequest(payloadBody) {
           let contentObj = { text: "" };
           if (enableStream) {
-              const response = await fetch(apiUrl, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...payloadBody, stream: true }) });
-              if (!response.ok) { const errData = await response.json(); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
-              const text = await response.text();
-              const lines = text.split("\n");
+              const response = await fetch(apiUrl, { 
+                  method: "POST", 
+                  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, 
+                  body: JSON.stringify({ ...payloadBody, stream: true }),
+                  signal: signal
+              });
+              if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
+              
+              const reader = response.body.getReader();
+              const decoder = new TextDecoder();
+              let done = false;
               let safeBuffer = "";
-              for (const line of lines) {
-                  if (line.startsWith("data: ")) {
-                      const jsonStr = line.slice(6);
-                      if (jsonStr.trim() === "[DONE]") continue;
-                      try {
-                          const data = JSON.parse(jsonStr);
-                          const delta = data.choices[0]?.delta;
-                          if (delta?.content) safeBuffer += delta.content;
-                      } catch (e) {}
+              let debugStreamBuffer = ""; // 用于流式打印的缓冲区
+              
+              while (!done) {
+                  const { value, done: readerDone } = await reader.read();
+                  if (readerDone) break;
+                  const chunk = decoder.decode(value, { stream: true });
+                  const lines = chunk.split("\n");
+                  for (const line of lines) {
+                      if (line.startsWith("data: ")) {
+                          const jsonStr = line.slice(6);
+                          if (jsonStr.trim() === "[DONE]") continue;
+                          try {
+                              const data = JSON.parse(jsonStr);
+                              const delta = data.choices[0]?.delta;
+                              if (delta?.content) {
+                                  safeBuffer += delta.content;
+                                  // === 调试模式：按分隔符实时打印 ===
+                                  if (debugMode) {
+                                      debugStreamBuffer += delta.content;
+                                      const sepRegex = /\\f|\f|\n/; // 遇到 \f, \\f 或换行符时截断打印
+                                      if (sepRegex.test(debugStreamBuffer)) {
+                                          let parts = debugStreamBuffer.split(sepRegex);
+                                          debugStreamBuffer = parts.pop(); 
+                                          for (let p of parts) {
+                                              if (p.trim()) console.log(`[调试模式: 流式实时生成片段] ${p.trim()}`);
+                                          }
+                                      }
+                                  }
+                              }
+                          } catch (e) {}
+                      }
                   }
+                  if (signal && signal.aborted) { reader.cancel(); break; }
+              }
+
+              if (debugMode && debugStreamBuffer.trim()) {
+                  console.log(`[调试模式: 流式实时生成片段] ${debugStreamBuffer.trim()}`);
               }
               contentObj.text = safeBuffer;
           } else {
-              const response = await fetch(apiUrl, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(payloadBody) });
-              if (!response.ok) { const errData = await response.json(); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
+              const response = await fetch(apiUrl, { 
+                  method: "POST", 
+                  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, 
+                  body: JSON.stringify(payloadBody),
+                  signal: signal
+              });
+              if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               const data = await response.json();
               contentObj.text = data.choices[0].message.content || "";
           }
@@ -2222,8 +2390,15 @@ processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.flo
         if (i < chunks.length - 1) { await new Promise(resolve => setTimeout(resolve, 800)); }
       }
       return { originalReply: replyContent, filteredReply: filteredContent };
-    } catch (error) { seal.replyToSender(ctx, msg, `✧ 请求失败: ${error.message}`); throw error; }
+    } catch (error) { 
+        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+            throw error; 
+        }
+        seal.replyToSender(ctx, msg, `✧ 请求失败: ${error.message}`); 
+        throw error; 
+    }
   }
+
 
   ext.onNotCommandReceived = handleMessage;
   const cmdClear = seal.ext.newCmdItemInfo();
@@ -2262,4 +2437,4 @@ processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.flo
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-                      }
+                  }
