@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenAI兼容
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
-// @version      1.9.94
+// @version      1.9.96
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/ai-rp.js
 // @timestamp    2026-4-26
@@ -9,7 +9,7 @@
 // ==/UserScript==
 
 if (!seal.ext.find("AI-role")) {
-  const ext = seal.ext.new("AI-role", "Sy", "1.9.94"); 
+  const ext = seal.ext.new("AI-role", "Sy", "1.9.96"); 
   seal.ext.register(ext);
   
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
@@ -1957,35 +1957,48 @@ if (loadModuleMatch) {
           return;
       }
 
-      if (text === "重新生成") {
+if (text === "重新生成") {
           let session = getSession(sessionKey);
           if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
-          
+
+          if (session.isGenerating && session.abortController) {
+              session.abortController.abort();
+              session.unlockGeneration();
+              await new Promise(r => setTimeout(r, 200));
+          }
+
           let lastAiIdx = -1;
           for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
               if (session.dynamicContent[i].role === 'assistant') { lastAiIdx = i; break; }
           }
-          if (lastAiIdx === -1) { seal.replyToSender(ctx, msg, "✧ 没有找可重新生成的回复"); return; }
-          
-          const deletedMsg = session.dynamicContent[lastAiIdx];
-          session.dynamicContent.splice(lastAiIdx, 1);
-          for (let i = session.fullHistory.length - 1; i >= 0; i--) {
-              if (session.fullHistory[i]._type === 'dynamic' && session.fullHistory[i].role === 'assistant' && session.fullHistory[i].timestamp === deletedMsg.timestamp) {
-                  session.fullHistory.splice(i, 1);
-                  break;
+
+          if (lastAiIdx !== -1) {
+              const deletedMsg = session.dynamicContent[lastAiIdx];
+              session.dynamicContent.splice(lastAiIdx, 1);
+              for (let i = session.fullHistory.length - 1; i >= 0; i--) {
+                  if (session.fullHistory[i]._type === 'dynamic' && session.fullHistory[i].role === 'assistant' && session.fullHistory[i].timestamp === deletedMsg.timestamp) {
+                      session.fullHistory.splice(i, 1);
+                      break;
+                  }
+              }
+              rollbackStatusBar(session, dynamicConfig);
+          } else {
+              const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
+              if (!lastMsg || lastMsg.role !== 'user') {
+                  seal.replyToSender(ctx, msg, "✧ 没有找到可重新生成的回复");
+                  return;
               }
           }
-          rollbackStatusBar(session, dynamicConfig);
-          
+
           const controller = createAbortController();
           session.lockGeneration(controller);
           try {
               await syncModule(session, dynamicConfig);
-              syncToKnowledgeBase(session, dynamicConfig, sessionKey); 
-              
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
-              
+
               session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
               updateSession(sessionKey, session);
               await updateStatusBar(session, result.originalReply, dynamicConfig);
@@ -2132,12 +2145,12 @@ if (loadModuleMatch) {
           await syncModule(session, dynamicConfig);
           await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
           
-          session.addDynamicMessage("user", processedText, null, userId);
+session.addDynamicMessage("user", processedText, null, userId);
           syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+          updateSession(sessionKey, session);
 
           const controller = createAbortController();
-          session.lockGeneration(controller);
-          
+
           try {
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
