@@ -598,18 +598,28 @@ function filterContent(originalContent) {
     let thinkingContent = [];
     let codeBlocks = [];
     
-    let filteredContent = originalContent
+    // 1. 基础清理：剥离 <think> 等思维过程
+    let baseContent = originalContent
       .replace(/<([a-zA-Z][a-zA-Z0-9_-]*)>([\s\S]*?)<\/\1>/g, (match, tag, inner) => {
         thinkingContent.push(inner.trim());
         return "";
       })
       .trim();
       
-    let pureText = filteredContent;
+    // 2. 构建 pureText（底层数据层）：供 AI 纯净模式上下文读取。
+    // 【核心机制】：保留完整的 ```代码块```，仅仅过滤掉冗长的 base64 图片数据
+    let pureText = baseContent;
     pureText = pureText.replace(/\[IMG:data:image\/[^;]+;base64,[^\]]+\]/g, "");
     pureText = pureText.replace(/!\[.*?\]\(data:image\/[^;]+;base64,[^\)]+\)/g, "");
     pureText = pureText.replace(/\[CQ:image,file=base64:\/\/[^\]]+\]/g, "");
     pureText = pureText.replace(/data:image\/[^;]+;base64,[^\s"'\)\]]+/g, "");
+      
+    // 3. 构建 filteredContent（UI展示层）：专门处理向 QQ 用户发送的最终文本。
+    // 【核心机制】：匹配到 ```代码块``` 后直接 return ""，让它在发给用户的消息里彻底蒸发。
+    let filteredContent = baseContent.replace(/```[a-zA-Z]*\n?([\s\S]*?)```/g, (match, innerCode) => {
+        codeBlocks.push(innerCode.trim()); 
+        return ""; 
+    }).trim();
       
     return { filteredContent, thinkingContent, codeBlocks, pureText };
 }
