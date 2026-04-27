@@ -1291,7 +1291,7 @@ async function syncModule(session, dynConfig) {
 
   async function fetchWebpageContent(url, maxLength = 4000) {
     try {
-        const response = await safeFetchWithTimeout("https" + "://r.jina.ai/" + url, {
+        const response = await safeFetchWithTimeout("https://md-api.syocars.workers.dev/" + url, {
             method: "GET",
             headers: { 
                 "Accept": "text/plain",
