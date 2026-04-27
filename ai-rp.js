@@ -923,16 +923,16 @@ async function syncModule(session, dynConfig) {
           let hasNewContent = false;
           let webImages = []; 
 
-          const scrapeResults = [];
-          for (const url of allUrls) {
-              let content = await fetchWebpageContent(url, dynConfig.webpageMaxLength);
-              if (content && !content.includes("抓取网页失败") && !content.includes("执行异常")) {
-                  scrapeResults.push(`\n\n--- ${url} ---\n${content}`);
-              } else {
-                  scrapeResults.push(null);
-              }
-              await new Promise(r => setTimeout(r, 600)); 
-          }
+// === 并发抓取替换方案 ===
+const fetchPromises = allUrls.map(url => fetchWebpageContent(url, dynConfig.webpageMaxLength));
+const rawContents = await Promise.all(fetchPromises);
+
+const scrapeResults = rawContents.map((content, index) => {
+    if (content && !content.includes("抓取网页失败") && !content.includes("执行异常")) {
+        return `\n\n--- ${allUrls[index]} ---\n${content}`;
+    }
+    return null;
+});
 
           // === 注入评分与净化逻辑 ===
           scrapeResults.forEach(res => {
@@ -1293,10 +1293,6 @@ async function syncModule(session, dynConfig) {
     try {
         const response = await safeFetchWithTimeout("https://md-api.syocars.workers.dev/" + url, {
             method: "GET",
-            headers: { 
-                "Accept": "text/plain",
-                "X-Return-Format": "markdown" 
-            }
         }, 30000);
         
         if (!response.ok) return "✧ 抓取网页失败，状态码: " + response.status;
