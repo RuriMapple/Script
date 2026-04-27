@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenAI兼容
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新及RAG热注入)
-// @version      1.9.95
+// @version      1.9.94
 // @author       Sy
 // @updateUrl    https://raw.githubusercontent.com/RuriMapple/Script/main/ai-rp.js
 // @timestamp    2026-4-26
@@ -9,7 +9,7 @@
 // ==/UserScript==
 
 if (!seal.ext.find("AI-role")) {
-  const ext = seal.ext.new("AI-role", "Sy", "1.9.95"); 
+  const ext = seal.ext.new("AI-role", "Sy", "1.9.94"); 
   seal.ext.register(ext);
   
     async function safeFetchWithTimeout(url, options, timeoutMs = 30000) {
@@ -912,7 +912,7 @@ async function syncModule(session, dynConfig) {
       
       if (allUrls.length > 0) {
           seal.replyToSender(ctx, msg, `✧ 正在抓取 ${allUrls.length} 个网页内容 ...`);
-          let pageContents = "[实时网络检索结果]: 参考网页";
+          let pageContents = "[实时网络检索结果]: 参考网页内容";
           let hasNewContent = false;
           let webImages = []; 
 
@@ -2447,4 +2447,4 @@ if (loadModuleMatch) {
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-    }
+      }
