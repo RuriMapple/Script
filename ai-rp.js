@@ -1293,6 +1293,10 @@ const scrapeResults = rawContents.map((content, index) => {
     try {
         const response = await safeFetchWithTimeout("https://md-api.syocars.workers.dev/" + url, {
             method: "GET",
+            headers: { 
+                "Accept": "text/plain",
+                "X-Return-Format": "markdown" 
+            }
         }, 30000);
         
         if (!response.ok) return "✧ 抓取网页失败，状态码: " + response.status;
