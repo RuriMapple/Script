@@ -954,18 +954,29 @@ const scrapeResults = rawContents.map((content, index) => {
               const pConfig = session?.personalConfig || {};
               const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
 
-              if (enableImage && uniqueWebImages.length > 0) {
-                  let contentArray = [
-                      { type: "text", text: `<web_search>\n${pageContents}\n</web_search>` }
-                  ];
-                  uniqueWebImages.forEach(url => {
-                      contentArray.push({ type: "image_url", image_url: { url: url } });
-                  });
-                  session.webSearchContext = contentArray;
-                  if (dynConfig.debugMode) console.log(`✧ 图片挂载 已追加 ${uniqueWebImages.length} 张原图直链`);
-              } else {
-                  session.webSearchContext = `<web_search>\n${pageContents}\n</web_search>`;
-              }
+          if (enableImage && uniqueWebImages.length > 0) {
+              let contentArray = [
+                  { type: "text", text: `<web_search>\n${pageContents}\n</web_search>` }
+              ];
+              
+              // === 联网图片经 Worker 转 Base64，避免中转站直连外网卡死 ===
+              const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
+              const transResults = await Promise.all(transTasks);
+              let successCount = 0;
+              
+              transResults.forEach(b64 => {
+                  if (b64 && b64.startsWith('data:image')) {
+                      contentArray.push({ type: "image_url", image_url: { url: b64 } });
+                      successCount++;
+                  }
+              });
+              // =============================================================
+              
+              session.webSearchContext = contentArray;
+              if (dynConfig.debugMode) console.log(`✧ 图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片（经 Worker 转码）`);
+          } else {
+              session.webSearchContext = `<web_search>\n${pageContents}\n</web_search>`;
+          }
           }
       }
   }
