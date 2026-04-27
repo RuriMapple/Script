@@ -1935,7 +1935,9 @@ if (loadModuleMatch) {
           if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
           
           const controller = createAbortController();
-          session.lockGeneration(controller);
+
+          session.lockGeneration(controller); 
+
           try {
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
@@ -2120,7 +2122,6 @@ if (text === "重新生成") {
 
       let isPrimaryTrigger = dynamicConfig.triggerWord && text.includes(dynamicConfig.triggerWord);
       let isOtherTrigger = !isPrimaryTrigger && dynamicConfig.otherTriggerWords.length > 0 && dynamicConfig.otherTriggerWords.some(word => text.includes(word));
-
       if (ctx.isPrivate || isPrimaryTrigger || isOtherTrigger) {
           let session = getSession(sessionKey); 
           if (!checkAPIConfig(session, true)) return seal.replyToSender(ctx, msg, "✧ 未配置API，发送『AI手册』查看配置教程");
@@ -2166,18 +2167,25 @@ if (text === "重新生成") {
 
           processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
 
-          await syncModule(session, dynamicConfig);
-          await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
-          
-session.addDynamicMessage("user", processedText, null, userId);
-          syncToKnowledgeBase(session, dynamicConfig, sessionKey);
-          updateSession(sessionKey, session);
-
+          // ✧ 修复点：刚准备做耗时任务前，就立刻创建控制器并上锁！
           const controller = createAbortController();
+          session.lockGeneration(controller);
 
           try {
+              // 1. 锁死之后，开始做耗时的前置任务（联网、知识库检索）
+              await syncModule(session, dynamicConfig);
+              await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
+              
+              // 2. 耗时任务安全做完，把用户的话正式【登记备案】
+              session.addDynamicMessage("user", processedText, null, userId);
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+              updateSession(sessionKey, session);
+
+              // 3. 正式向主干 AI 发送完整打包好的上下文
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
+              
+              // 4. AI 顺利回复，把 AI 的话也【登记备案】
               session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
 
               updateSession(sessionKey, session); 
@@ -2188,6 +2196,7 @@ session.addDynamicMessage("user", processedText, null, userId);
                   console.error("API请求失败:", error); 
               }
           } finally {
+              // 无论成功还是失败，最后都把锁解开，并处理暂存队列里的排队消息
               session.unlockGeneration();
               
               while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
@@ -2223,6 +2232,7 @@ session.addDynamicMessage("user", processedText, null, userId);
           }
           return;
       }
+
 
     } catch (error) { console.error("✧ 处理错误 ", error); seal.replyToSender(ctx, msg, `✧ 处理失败: ${error.message}`); }
   }
