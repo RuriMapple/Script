@@ -597,16 +597,8 @@ if (!seal.ext.find("AI-role")) {
     
     let thinkingContent = [];
     let filteredContent = originalContent
-      .replace(/<think>([\s\S]*?)<\/think>/g, (match, thinking) => {
-        thinkingContent.push(thinking.trim());
-        return "";
-      })
-      .trim();
-      
-    let codeBlocks = [];
-    filteredContent = filteredContent
-      .replace(/```[\s\S]*?```/g, (match) => {
-        codeBlocks.push(match);
+      .replace(/<([a-zA-Z][a-zA-Z0-9_-]*)>([\s\S]*?)<\/\1>/g, (match, tag, inner) => {
+        thinkingContent.push(inner.trim());
         return "";
       })
       .trim();
@@ -2461,4 +2453,4 @@ session.addDynamicMessage("user", processedText, null, userId);
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-                      }
+                  }
