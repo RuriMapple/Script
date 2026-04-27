@@ -496,6 +496,12 @@ const anchorsInsertion = [];
     }
   }
 
+  function createAbortController() {
+      if (typeof AbortController !== "undefined") {
+          return new AbortController();
+      }
+      return { signal: { aborted: false }, abort: function() { this.signal.aborted = true; } };
+  }
 
   const sessions = new Map();
   const dynamicConfig = new DynamicConfig(ext);
@@ -1105,7 +1111,7 @@ async function syncModule(session, dynConfig) {
 
                   if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
                       messagesContext.push(msgObj);
-                      for (let tc of msg.tool_calls) {
+                      for (let tc of msgObj.tool_calls) {
                           if (["web_search", "google_search"].includes(tc.function.name)) {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
                               if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
@@ -1116,7 +1122,7 @@ async function syncModule(session, dynConfig) {
                           }
                       }
                   } else {
-                      finalOutput = msg.content || "";
+                      finalOutput = msgObj.content || "";
                       success = true;
                       break;
                   }
@@ -1920,7 +1926,7 @@ if (loadModuleMatch) {
           }
           if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
           
-          const controller = new AbortController();
+          const controller = createAbortController();
           session.lockGeneration(controller);
           try {
               const payload = session.buildPayload();
@@ -1971,7 +1977,7 @@ if (loadModuleMatch) {
           }
           rollbackStatusBar(session, dynamicConfig);
           
-          const controller = new AbortController();
+          const controller = createAbortController();
           session.lockGeneration(controller);
           try {
               await syncModule(session, dynamicConfig);
@@ -2129,7 +2135,7 @@ if (loadModuleMatch) {
           session.addDynamicMessage("user", processedText, null, userId);
           syncToKnowledgeBase(session, dynamicConfig, sessionKey);
 
-          const controller = new AbortController();
+          const controller = createAbortController();
           session.lockGeneration(controller);
           
           try {
@@ -2155,7 +2161,7 @@ if (loadModuleMatch) {
                       session.addDynamicMessage('user', pm.content, pm.filteredContent, pm.userId);
                   }
                   
-                  const subController = new AbortController();
+                  const subController = createAbortController();
                   session.lockGeneration(subController);
                   
                   try {
@@ -2226,20 +2232,26 @@ if (loadModuleMatch) {
 
       async function makeRequest(payloadBody) {
           let contentObj = { text: "" };
+          let fetchOptions = {
+              method: "POST",
+              headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ ...payloadBody, stream: enableStream })
+          };
+          
+          // 仅在原生支持的情况下才把 signal 塞给底层 fetch
+          if (signal && typeof AbortController !== 'undefined') {
+              fetchOptions.signal = signal;
+          }
+
           if (enableStream) {
-              const response = await fetch(apiUrl, { 
-                  method: "POST", 
-                  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, 
-                  body: JSON.stringify({ ...payloadBody, stream: true }),
-                  signal: signal
-              });
+              const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               
               const reader = response.body.getReader();
               const decoder = new TextDecoder();
               let done = false;
               let safeBuffer = "";
-              let debugStreamBuffer = ""; // 用于流式打印的缓冲区
+              let debugStreamBuffer = ""; 
               
               while (!done) {
                   const { value, done: readerDone } = await reader.read();
@@ -2255,13 +2267,12 @@ if (loadModuleMatch) {
                               const delta = data.choices[0]?.delta;
                               if (delta?.content) {
                                   safeBuffer += delta.content;
-                                  // === 调试模式：按分隔符实时打印 ===
                                   if (debugMode) {
                                       debugStreamBuffer += delta.content;
-                                      const sepRegex = /\\f|\f|\n/; // 遇到 \f, \\f 或换行符时截断打印
+                                      const sepRegex = /\\f|\f|\n/;
                                       if (sepRegex.test(debugStreamBuffer)) {
                                           let parts = debugStreamBuffer.split(sepRegex);
-                                          debugStreamBuffer = parts.pop(); 
+                                          debugStreamBuffer = parts.pop();
                                           for (let p of parts) {
                                               if (p.trim()) console.log(`[调试模式: 流式实时生成片段] ${p.trim()}`);
                                           }
@@ -2271,26 +2282,29 @@ if (loadModuleMatch) {
                           } catch (e) {}
                       }
                   }
-                  if (signal && signal.aborted) { reader.cancel(); break; }
+                  // 使用自定义打断逻辑兼容旧版引擎
+                  if (signal && signal.aborted) { 
+                      reader.cancel(); 
+                      let e = new Error("aborted"); e.name = "AbortError"; throw e; 
+                  }
               }
-
               if (debugMode && debugStreamBuffer.trim()) {
                   console.log(`[调试模式: 流式实时生成片段] ${debugStreamBuffer.trim()}`);
               }
               contentObj.text = safeBuffer;
           } else {
-              const response = await fetch(apiUrl, { 
-                  method: "POST", 
-                  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, 
-                  body: JSON.stringify(payloadBody),
-                  signal: signal
-              });
+              const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
+              
+              // 非流式下，即使原生 fetch 没打断，拿到结果后我们也强行抛弃
+              if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
+              
               const data = await response.json();
               contentObj.text = data.choices[0].message.content || "";
           }
           return contentObj;
       }
+
 
       let replyContent = "";
       let finalError = null;
@@ -2437,4 +2451,4 @@ if (loadModuleMatch) {
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-                  }
+}
