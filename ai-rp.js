@@ -942,7 +942,7 @@ async function syncModule(session, dynConfig) {
       }
   }
 
-  async function syncToKnowledgeBase(session, dynConfig, sessionKey) {
+    async function syncToKnowledgeBase(session, dynConfig, sessionKey) {
       const pConfig = session.personalConfig || {};
       const enableSync = (pConfig.enableKBSync !== null && pConfig.enableKBSync !== undefined) ? pConfig.enableKBSync : dynConfig.enableKBSync;
       const syncApiUrl = pConfig.kbSyncApi || dynConfig.kbSyncApi;
@@ -957,10 +957,8 @@ async function syncModule(session, dynConfig) {
               moduleContent = session.lockedContents.module.content;
           }
 
-          let anchorsObj = {};
-          for (let i = 0; i < 5; i++) {
-              anchorsObj[i] = (pConfig.fixedAnchors && pConfig.fixedAnchors[i] !== undefined) ? pConfig.fixedAnchors[i] : (dynConfig.fixedAnchors[i] || "");
-          }
+          // === 已删除 anchorsObj 的组装逻辑 ===
+
           let pureHistory = session.dynamicContent.map(msg => {
               let { pureText } = filterContent(msg.content);
               if (typeof pureText === 'string') {
@@ -974,7 +972,7 @@ async function syncModule(session, dynConfig) {
               sessionId: sessionKey, 
               timestamp: Date.now(),
               moduleData: moduleContent,
-              anchors: anchorsObj,
+              // === 已从 Payload 中移除 anchors 字段 ===
               history: pureHistory
           };
 
@@ -1175,15 +1173,40 @@ async function syncModule(session, dynConfig) {
             if (codeBlockMatch) {
                 if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
                 session.personalConfig.fixedAnchors[0] = codeBlockMatch[0];
-                if (dynConfig.debugMode) console.log("✧ 状态栏更新 成功正则提取并更新个人配置项：锚定项0.");
+                
+                for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+                    if (session.dynamicContent[i].role === "assistant") {
+                        session.dynamicContent[i].anchorSnapshot = codeBlockMatch[0];
+                        break;
+                    }
+                }
+                
+                if (dynConfig.debugMode) console.log("✧ 状态栏更新 成功正则提取并更新个人配置项：锚定项0");
             } else {
-                if (dynConfig.debugMode) console.log("✧ 状态栏更新 未检测到代码块，跳过更新");
+                if (dynConfig.debugMode) console.log("✧ 状态栏更新 未检测到代码块 跳过更新");
             }
         }
     } catch (e) {
         console.error("✧ 状态栏提取异常", e);
     }
 }
+
+  // === 状态栏回滚函数 ===
+  function rollbackStatusBar(session, dynConfig) {
+      let lastValidAnchor = dynConfig.fixedAnchors[0] || ""; 
+      
+      for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+          if (session.dynamicContent[i].role === "assistant" && session.dynamicContent[i].anchorSnapshot) {
+              lastValidAnchor = session.dynamicContent[i].anchorSnapshot;
+              break;
+          }
+      }
+      
+      if (!session.personalConfig.fixedAnchors) {
+          session.personalConfig.fixedAnchors = {};
+      }
+      session.personalConfig.fixedAnchors[0] = lastValidAnchor;
+  }
 
   async function fetchImageToBase64(url) {
     const transApiBaseUrl = dynamicConfig.imgTransApi;
@@ -1879,6 +1902,8 @@ if (loadModuleMatch) {
           const deletedMessages = session.dynamicContent.splice(lastAIReplyIndex, 1);
           for (let i = session.fullHistory.length - 1; i >= 0 && deletedMessages.length > 0; i--) { if (session.fullHistory[i]._type === "dynamic" && session.fullHistory[i].content === deletedMessages[0].content) { session.fullHistory.splice(i, 1); break; } }
           
+          rollbackStatusBar(session, dynamicConfig);
+          
           for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
             if (session.dynamicContent[i].role === "user") {
               lastUserMsgText = session.dynamicContent[i].content;
@@ -1929,6 +1954,7 @@ if (lastUserMsgText) {
         
         session.webSearchContext = null;
         session.ragContext = null;
+rollbackStatusBar(session, dynamicConfig);
         
         updateSession(sessionKey, session); 
         seal.replyToSender(ctx, msg, `✧ 成功删除「 ${Math.floor(actualDelete / 2)} 」轮对话 已清理关联网页缓存与知识库下挂`);
@@ -2236,4 +2262,4 @@ processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.flo
     return seal.ext.newCmdExecuteResult(true);
   };
   ext.cmdMap.clr = cmdClear;
-      }
+                      }
