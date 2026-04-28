@@ -1102,7 +1102,7 @@ const scrapeResults = rawContents.map((content, index) => {
                   type: "function",
                   function: {
                       name: "web_search",
-                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息  当用户询问最新事实、当前事件、不明确的信息时使用此工具 必须传入query搜索词  ",
+                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
                       parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
                   }
               }],
