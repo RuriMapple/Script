@@ -2452,11 +2452,18 @@ while (session.dynamicContent.length > 0 &&
         }
       }
 
-      const msgId = msg.rawId || msg.messageId;
-if (debugMode) console.log("✧ msgId取值:", msgId, "rawId:", msg.rawId, "messageId:", msg.messageId); 
+      let msgId = msg.rawId || msg.messageId; 
+      // ✧ 修复点：检测到底层协议溢出的负数ID时，通过位运算将其还原为真实的无符号正整数
+      if (msgId && String(msgId).startsWith('-')) {
+          msgId = Number(msgId) >>> 0; 
+      }
+      
       for (let i = 0; i < chunks.length; i++) {
         const segments = [];
-        if (useReply && msgId && i === 0) { segments.push(`[CQ:reply,id=${msgId}]`); }
+
+        if (useReply && msgId && i === 0 && !ctx.isPrivate) { 
+            segments.push(`[CQ:reply,id=${msgId}]`); 
+        }
         segments.push(chunks[i]);
         seal.replyToSender(ctx, msg, segments.join(""));
         if (i < chunks.length - 1) { await new Promise(resolve => setTimeout(resolve, 800)); }
