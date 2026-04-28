@@ -2452,14 +2452,10 @@ while (session.dynamicContent.length > 0 &&
         }
       }
 
-      let msgId = msg.rawId || msg.messageId; 
-      // ✧ 修复点：检测到底层协议溢出的负数ID时，通过位运算将其还原为真实的无符号正整数
-      if (msgId && String(msgId).startsWith('-')) {
-          msgId = Number(msgId) >>> 0; 
-      }
-      
+      const msgId = msg.rawId || msg.messageId; 
       for (let i = 0; i < chunks.length; i++) {
         const segments = [];
+        // ✧ 修复点：加入 !ctx.isPrivate 拦截，避开底层协议的私聊引用 Bug
         if (useReply && msgId && i === 0 && !ctx.isPrivate) { 
             segments.push(`[CQ:reply,id=${msgId}]`); 
         }
