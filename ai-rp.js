@@ -57,7 +57,7 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.registerStringConfig(ext, "Serper搜索API密钥", ""); 
   seal.ext.registerStringConfig(ext, "联网最大迭代次数", "3"); 
   seal.ext.registerStringConfig(ext, "网页抓取最大字符数", "4000"); 
-  seal.ext.registerStringConfig(ext, "联网请求前缀", "请根据以下用户的提问，使用搜索工具查找最新相关信息，然后**仅仅返回你认为最相关的网页链接列表**，无需任何多余的解释和客套话：\n"); 
+  seal.ext.registerStringConfig(ext, "联网请求前缀", "请根据以下用户的提问 使用搜索工具查找最新相关信息 然后**仅仅返回你认为最相关的网页链接列表** 无需任何多余的解释和客套话：\n"); 
 
   // === 知识库热更新与检索相关配置 ===
   seal.ext.registerBoolConfig(ext, "开启知识库同步", false);
@@ -66,8 +66,8 @@ if (!seal.ext.find("AI-role")) {
   // === 知识库检索与解耦生成相关配置 ===
   seal.ext.registerBoolConfig(ext, "开启知识库检索", false);
   seal.ext.registerStringConfig(ext, "知识库检索API", "");
-  seal.ext.registerStringConfig(ext, "语义压缩前缀", "请提取以下用户输入的核心内容与意图，以利于向量检索（无需任何解释和客套话，直接返回短语）：\n");
-  seal.ext.registerStringConfig(ext, "状态栏生成前缀", "请根据最新一轮AI的回答，结合原有的代码块状态，生成最新的状态栏，且必须使用```代码块包裹返回：\n");
+  seal.ext.registerStringConfig(ext, "语义压缩前缀", "请提取以下用户输入的核心内容与意图 以利于向量检索（无需任何解释和客套话 直接返回短语）：\n");
+  seal.ext.registerStringConfig(ext, "状态栏生成前缀", "请根据最新一轮AI的回答 结合原有的代码块状态 生成最新的状态栏 且必须使用```代码块包裹返回：\n");
 
   seal.ext.registerStringConfig(ext, "临时会话数量", "50");
   seal.ext.registerStringConfig(ext, "图片转码API", "");
@@ -352,7 +352,7 @@ if (!seal.ext.find("AI-role")) {
       const anchorsInsertion = [];
 
       // 第一步：【最高优先级】处理固定角色设定和自定义锚定项
-      // 只有在没设置“系统提示”指令时，才加载全局的固定设定
+      // 只有在没设置“系统提示”指令时 才加载全局的固定设定
       if (!pConfig.systemPrompt) {
         const hasRoleSetting = this.config.fixedRoleSetting && this.config.fixedRoleSetting.trim() !== "";
         const fictionRole = this.anchor.fictionRoleHistory || [];
@@ -376,7 +376,7 @@ if (!seal.ext.find("AI-role")) {
                                : this.config.fixedAnchors[d];
           
           if (fixedContent && fixedContent.trim() !== "") {
-            let parsedAnchor = fixedContent.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
+            let parsedAnchor = fixedContent.replace(/\{{1,2}(3|6|10|20|100)\}{1,2}/g, (match, maxVal) => Math.floor(Math.random() * parseInt(maxVal)) + 1);
             let targetIndex = dynamicClone.length - d;
             if (targetIndex < 0) targetIndex = 0;
             anchorsInsertion.push({
@@ -388,7 +388,7 @@ if (!seal.ext.find("AI-role")) {
       }
 
       // 第二步：【次高优先级】处理模组、角色卡、上下文合并组 (anchorGroup)
-      // 这一步确保模组紧跟在角色设定后面，而不是抢在它前面
+      // 这一步确保模组紧跟在角色设定后面 而不是抢在它前面
       const userDepth = (pConfig.depth !== null && pConfig.depth !== undefined) ? pConfig.depth : this.config.depth;
       const variableIndex = Math.max(0, Math.min(dynamicClone.length, dynamicClone.length - userDepth));
       anchorsInsertion.push({ index: variableIndex, messages: anchorGroup });
@@ -450,7 +450,7 @@ if (!seal.ext.find("AI-role")) {
       return mergedMessages.filter((m) => m).map(({ _type, timestamp, filteredContent, ...rest }) => {
         let finalContent = rest.content;
         if (_type && _type !== 'dynamic' && typeof finalContent === 'string') {
-          finalContent = finalContent.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
+          finalContent = finalContent.replace(/\{{1,2}(3|6|10|20|100)\}{1,2}/g, (match, maxVal) => Math.floor(Math.random() * parseInt(maxVal)) + 1);
         }
         return { ...rest, content: finalContent };
       });
@@ -606,16 +606,16 @@ function filterContent(originalContent) {
       })
       .trim();
       
-    // 2. 构建 pureText（底层数据层）：供 AI 纯净模式上下文读取。
-    // 【核心机制】：保留完整的 ```代码块```，仅仅过滤掉冗长的 base64 图片数据
+    // 2. 构建 pureText（底层数据层）：供 AI 纯净模式上下文读取  
+    // 【核心机制】：保留完整的 ```代码块``` 仅仅过滤掉冗长的 base64 图片数据
     let pureText = baseContent;
     pureText = pureText.replace(/\[IMG:data:image\/[^;]+;base64,[^\]]+\]/g, "");
     pureText = pureText.replace(/!\[.*?\]\(data:image\/[^;]+;base64,[^\)]+\)/g, "");
     pureText = pureText.replace(/\[CQ:image,file=base64:\/\/[^\]]+\]/g, "");
     pureText = pureText.replace(/data:image\/[^;]+;base64,[^\s"'\)\]]+/g, "");
       
-    // 3. 构建 filteredContent（UI展示层）：专门处理向 QQ 用户发送的最终文本。
-    // 【核心机制】：匹配到 ```代码块``` 后直接 return ""，让它在发给用户的消息里彻底蒸发。
+    // 3. 构建 filteredContent（UI展示层）：专门处理向 QQ 用户发送的最终文本  
+    // 【核心机制】：匹配到 ```代码块``` 后直接 return "" 让它在发给用户的消息里彻底蒸发  
     let filteredContent = baseContent.replace(/```[a-zA-Z]*\n?([\s\S]*?)```/g, (match, innerCode) => {
         codeBlocks.push(innerCode.trim()); 
         return ""; 
@@ -681,7 +681,7 @@ function filterContent(originalContent) {
                           
                           if (imgContent.startsWith('data:image')) {
                               if (!isSupportedImageFormat(imgContent)) {
-                                  if (debugMode) console.log(`✧ 已拦截不支持的图片格式（Base64类型），直接过滤`);
+                                  if (debugMode) console.log(`✧ 已拦截不支持的图片格式（Base64类型） 直接过滤`);
                                   continue;
                               } else {
                                   contentArray.push({ type: "image_url", image_url: { url: imgContent } });
@@ -692,20 +692,20 @@ function filterContent(originalContent) {
                               else if (!url.startsWith('http')) url = 'http://' + url;
                               
                               if (!isSupportedImageFormat(url)) {
-                                  if (debugMode) console.log(`✧ 已拦截不支持的图片格式（直链: ${url}），直接过滤`);
+                                  if (debugMode) console.log(`✧ 已拦截不支持的图片格式（直链: ${url}） 直接过滤`);
                                   continue;
                               }
 
                               const b64 = await fetchImageToBase64(url);
                               if (b64) {
                                   if (!isSupportedImageFormat(b64)) {
-                                      if (debugMode) console.log(`✧ 转码后格式仍不支持，直接过滤`);
+                                      if (debugMode) console.log(`✧ 转码后格式仍不支持 直接过滤`);
                                       continue;
                                   } else {
                                       contentArray.push({ type: "image_url", image_url: { url: b64 } });
                                   }
                               } else {
-                                  if (debugMode) console.log(`✧ 图片转码不成功，回退直链: ${url}`);
+                                  if (debugMode) console.log(`✧ 图片转码不成功 回退直链: ${url}`);
                                   contentArray.push({ type: "image_url", image_url: { url: url } });
                               }
                           }
@@ -728,7 +728,7 @@ function filterContent(originalContent) {
                       if (isSupportedImageFormat(item.image_url.url)) {
                           safeContentArray.push(item);
                       } else {
-                          if (debugMode) console.log(`✧ 拦截到多模态Array中的非法图片，直接过滤: ${item.image_url.url}`);
+                          if (debugMode) console.log(`✧ 拦截到多模态Array中的非法图片 直接过滤: ${item.image_url.url}`);
                           continue;
                       }
                   } else {
@@ -747,7 +747,7 @@ function filterContent(originalContent) {
   function filterAndScoreImages(markdown) {
       const firstLineMatch = markdown.match(/^#*\s*(.*)/);
       const mainTitle = firstLineMatch ? firstLineMatch[1] : "";
-      const keywords = mainTitle.toLowerCase().split(/[\s,，:：|]+/).filter(w => w.length > 1);
+      const keywords = mainTitle.toLowerCase().split(/[\s, :：|]+/).filter(w => w.length > 1);
 
       const imgRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
       let match;
@@ -792,7 +792,7 @@ function filterContent(originalContent) {
               else if (contextAround.includes(kw)) score += 5;
           }
 
-          // 4. 判定线（满分通常在75+，及格线设为30）
+          // 4. 判定线（满分通常在75+ 及格线设为30）
           if (score >= 30) {
               validImages.push({ url: match[2], alt: altText, score }); 
           } else {
@@ -852,7 +852,7 @@ async function syncModule(session, dynConfig) {
           if (syncApiUrlForClear) {
               try {
                   const clearUrl = syncApiUrlForClear.replace(/\/sync\/?$/, '/clear');
-                  seal.replyToSender(ctx, msg, "✧ 检测到当前无会话轮数，正在清扫云端知识库 ..."); 
+                  seal.replyToSender(ctx, msg, "✧ 检测到当前无会话轮数 正在清扫云端知识库 ..."); 
                   
                   // 30 秒超时阻塞
                   await safeFetchWithTimeout(clearUrl, {
@@ -959,7 +959,7 @@ const scrapeResults = rawContents.map((content, index) => {
                   { type: "text", text: `<web_search>\n${pageContents}\n</web_search>` }
               ];
               
-              // === 联网图片经 Worker 转 Base64，避免中转站直连外网卡死 ===
+              // === 联网图片经 Worker 转 Base64 避免中转站直连外网卡死 ===
               const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
               const transResults = await Promise.all(transTasks);
               let successCount = 0;
@@ -1073,7 +1073,7 @@ const scrapeResults = rawContents.map((content, index) => {
       const modelNameRaw = dynConfig.publicModelName;
 
       if (!apiUrl || !apiKey || !modelNameRaw) {
-          if (dynConfig.debugMode) console.log("✧ API异常 环境未配置完全，放弃联网。");
+          if (dynConfig.debugMode) console.log("✧ API异常 环境未配置完全 放弃联网  ");
           return [];
       }
 
@@ -1102,7 +1102,7 @@ const scrapeResults = rawContents.map((content, index) => {
                   type: "function",
                   function: {
                       name: "web_search",
-                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具，必须传入query搜索词。",
+                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息  当用户询问最新事实、当前事件、不明确的信息时使用此工具 必须传入query搜索词  ",
                       parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
                   }
               }],
@@ -1203,7 +1203,7 @@ const scrapeResults = rawContents.map((content, index) => {
             }
         }
 
-        // 发送给处理状态栏的流程时，传入拼接合并后的 combinedAnchor0
+        // 发送给处理状态栏的流程时 传入拼接合并后的 combinedAnchor0
         const statusBarPrompt = dynConfig.statusBarPrefix + "\n\nuser: \n" + latestUserInput + "\n\nassistant: \n" + aiReply + "\n\n当前状态: \n" + combinedAnchor0;
         const newStatusBarRes = await sendPublicAPIRequest(session, [{role: "user", content: statusBarPrompt}], dynConfig);
         
@@ -1276,7 +1276,7 @@ const scrapeResults = rawContents.map((content, index) => {
     const apiKey = dynamicConfig.serperApiKey;
     if (!apiKey) {
         console.error("✧ 联网搜索 缺少 Serper搜索API密钥 配置");
-        return "✧ 未配置搜索API密钥，无法进行搜索";
+        return "✧ 未配置搜索API密钥 无法进行搜索";
     }
     try {
         const response = await safeFetchWithTimeout("https" + "://google.serper.dev/search", {
@@ -1288,12 +1288,12 @@ const scrapeResults = rawContents.map((content, index) => {
             body: JSON.stringify({ q: query })
         }, 30000);
         
-        if (!response.ok) return "搜索API请求失败，状态码: " + response.status;
+        if (!response.ok) return "搜索API请求失败 状态码: " + response.status;
         const data = await response.json();
         if (data.organic && data.organic.length > 0) {
             return data.organic.slice(0, 5).map(item => `标题: ${item.title}\n摘要: ${item.snippet}\n链接: ${item.link}`).join("\n\n");
         }
-        return "未找到相关搜索结果。";
+        return "未找到相关搜索结果  ";
     } catch (error) {
         console.error("✧ 联网搜索 异常:", error);
         return "搜索执行异常: " + error.message;
@@ -1310,7 +1310,7 @@ const scrapeResults = rawContents.map((content, index) => {
             }
         }, 30000);
         
-        if (!response.ok) return "✧ 抓取网页失败，状态码: " + response.status;
+        if (!response.ok) return "✧ 抓取网页失败 状态码: " + response.status;
         const text = await response.text();
         return text.length > maxLength ? text.substring(0, maxLength) + "\n...[内容过长已截断]" : text;
     } catch (error) {
@@ -1323,11 +1323,20 @@ const scrapeResults = rawContents.map((content, index) => {
     if (!originalText) return originalText;
 
     let rendered = originalText
-      .replace(/\*\*([\s\S]*?)\*\*/g, '「$1」') // 将 **包裹的文本** 替换为 「包裹的文本」
+      .replace(/\*\*([\s\S]*?)\*\*/g, '「$1」') 
       .replace(/---/g, '⊹═══') 
       .replace(/^(\s*)(#+)/gm, (match, space, hashes) => space + '✦'.repeat(hashes.length)) 
-      .replace(/^(\s*)(?:-|\*)\s/gm, '$1⊹ ') // 像单个 - 一样的逻辑，将单 * 也作为列表符替换为 ⊹
-      .replace(/[【】]/g, '◈'); // 将 【 和 】 替换为 ◈
+      .replace(/^(\s*)(?:-|\*)\s/gm, '$1⊹ ') 
+      .replace(/[【】]/g, '◈') 
+      .replace(/：/g, ': ')
+      .replace(/，/g, ', ')
+      .replace(/“/g, ' "')
+      .replace(/”/g, '" ')
+      .replace(/（/g, ' (')
+      .replace(/）/g, ') ')
+      .replace(/《/g, '​«  ')
+      .replace(/》/g, '  »');
+
 
     const numMap = ['𝟶', '𝟷', '𝟸', '𝟹', '𝟺', '𝟻', '𝟼', '𝟽', '𝟾', '𝟿'];
     const upperMap = ['𝙰', '𝙱', '𝙲', '𝙳', '𝙴', '𝙵', '𝙶', '𝙷', '𝙸', '𝙹', '𝙺', '𝙻', '𝙼', '𝙽', '𝙾', '𝙿', '𝚀', '𝚁', '𝚂', '𝚃', '𝚄', '𝚅', '𝚆', '𝚇', '𝚈', '𝚉'];
@@ -1362,7 +1371,7 @@ const scrapeResults = rawContents.map((content, index) => {
     let session;
     if (sessionName) {
       const savedData = sessionManager.loadSession(userId, sessionName);
-      if (!savedData) return `✧ 会话「${sessionName}」不存在，请检查会话标题是否正确`;
+      if (!savedData) return `✧ 会话「${sessionName}」不存在 请检查会话标题是否正确`;
       session = new ChatGPTSession(config);
       session.importSession(savedData);
     } else {
@@ -1445,7 +1454,7 @@ const scrapeResults = rawContents.map((content, index) => {
                     updateSession(sessionKey, session);
                     
                     if (isTriggering) {
-                        seal.replyToSender(ctx, msg, "✧ 未配置API 已为当前环境接入后台公用API，推荐发送『 AI手册 』查看个人配置方法");
+                        seal.replyToSender(ctx, msg, "✧ 未配置API 已为当前环境接入后台公用API 推荐发送『 AI手册 』查看个人配置方法");
                     }
                     return true;
                 }
@@ -1729,7 +1738,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
             updateSession(sessionKey, session);
             seal.replyToSender(ctx, msg, `✧ 当前环境的${target}已重置`);
         } else {
-            seal.replyToSender(ctx, msg, `✧ 未找到配置项「${target}」。\n支持重置：系统提示/api端点/api密钥/识别图片/联网请求/外部模组地址/模型名称/随机种子/纯净模式/温度/深度等，或直接发送"重置配置"重置所有。`);
+            seal.replyToSender(ctx, msg, `✧ 未找到配置项「${target}」  \n支持重置：系统提示/api端点/api密钥/识别图片/联网请求/外部模组地址/模型名称/随机种子/纯净模式/温度/深度等 或直接发送"重置配置"重置所有  `);
         }
         return true;
       }
@@ -1931,7 +1940,7 @@ if (loadModuleMatch) {
               session.abortController.abort();
           }
           session.unlockGeneration();
-          seal.replyToSender(ctx, msg, "✧ 已中止生成，锁已解除");
+          seal.replyToSender(ctx, msg, "✧ 已中止生成 锁已解除");
           return;
       }
 
@@ -1940,10 +1949,10 @@ if (loadModuleMatch) {
           if (session.dynamicContent.length === 0) return;
           const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
           if (lastMsg.role !== 'assistant') {
-              seal.replyToSender(ctx, msg, "✧ 当前最后角色不是AI，无法继续生成");
+              seal.replyToSender(ctx, msg, "✧ 当前最后角色不是AI 无法继续生成");
               return;
           }
-          if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
+          if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API 发送『AI手册』查看配置教程"); }
           
           const controller = createAbortController();
 
@@ -1980,9 +1989,9 @@ if (loadModuleMatch) {
 
       if (text === "重新生成") {
           let session = getSession(sessionKey);
-          if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API，发送『AI手册』查看配置教程"); }
+          if (!checkAPIConfig(session, true)) { return seal.replyToSender(ctx, msg, "✧ 当前环境未配置API 发送『AI手册』查看配置教程"); }
 
-          // [防御核心 1]：创建深拷贝快照，用于应对 API 请求失败时的数据回滚，避免残缺状态持久化
+          // [防御核心 1]：创建深拷贝快照 用于应对 API 请求失败时的数据回滚 避免残缺状态持久化
           const backupDynamic = JSON.parse(JSON.stringify(session.dynamicContent));
           const backupFullHistory = JSON.parse(JSON.stringify(session.fullHistory));
 
@@ -1992,7 +2001,7 @@ if (loadModuleMatch) {
               await new Promise(r => setTimeout(r, 200));
           }
 
-          // [防御核心 2]：严格进行末尾校验，抛弃原有的倒序遍历，彻底杜绝快速连点导致的历史越界穿透
+          // [防御核心 2]：严格进行末尾校验 抛弃原有的倒序遍历 彻底杜绝快速连点导致的历史越界穿透
           const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
 
           if (lastMsg && lastMsg.role === 'assistant') {
@@ -2034,13 +2043,13 @@ if (loadModuleMatch) {
               await updateStatusBar(session, result.originalReply, dynamicConfig);
           } catch (error) {
               if (error.name === 'AbortError' || error.message.includes('aborted')) {
-                  // 用户主动中止，不进行回滚，保留当前截断状态
+                  // 用户主动中止 不进行回滚 保留当前截断状态
               } else {
-                  // [防御核心 3]：遇到网络或 API 异常，执行硬回滚，恢复到重新生成前的健康状态
+                  // [防御核心 3]：遇到网络或 API 异常 执行硬回滚 恢复到重新生成前的健康状态
                   session.dynamicContent = backupDynamic;
                   session.fullHistory = backupFullHistory;
                   rollbackStatusBar(session, dynamicConfig);
-                  seal.replyToSender(ctx, msg, `✧ 重新生成失败，已自动回滚: ${error.message}`);
+                  seal.replyToSender(ctx, msg, `✧ 重新生成失败 已自动回滚: ${error.message}`);
               }
           } finally {
               session.unlockGeneration();
@@ -2137,7 +2146,7 @@ if (loadModuleMatch) {
       let isOtherTrigger = !isPrimaryTrigger && dynamicConfig.otherTriggerWords.length > 0 && dynamicConfig.otherTriggerWords.some(word => text.includes(word));
       if (ctx.isPrivate || isPrimaryTrigger || isOtherTrigger) {
           let session = getSession(sessionKey); 
-          if (!checkAPIConfig(session, true)) return seal.replyToSender(ctx, msg, "✧ 未配置API，发送『AI手册』查看配置教程");
+          if (!checkAPIConfig(session, true)) return seal.replyToSender(ctx, msg, "✧ 未配置API 发送『AI手册』查看配置教程");
           
           let isPureMode = (session.personalConfig.pureModeEnabled !== null && session.personalConfig.pureModeEnabled !== undefined) ? session.personalConfig.pureModeEnabled : dynamicConfig.pureModeEnabled;
           let processedText = (isPureMode && isPrimaryTrigger) ? text.replace(dynamicConfig.triggerWord, "").trim() : text;
@@ -2178,18 +2187,19 @@ if (loadModuleMatch) {
               processedText = processedText.replace(cqImgFallbackRegex, "");
           }
 
-          processedText = processedText.replace(/\{{1,2}随机数\}{1,2}/g, () => Math.floor(Math.random() * 100) + 1);
+          processedText = processedText.replace(/\{{1,2}(3|6|10|20|100)\}{1,2}/g, (match, maxVal) => Math.floor(Math.random() * parseInt(maxVal)) + 1);
 
-          // ✧ 修复点：刚准备做耗时任务前，就立刻创建控制器并上锁！
+          // ✧ 修复点：刚准备做耗时任务前 就立刻创建控制器并上锁！
+
           const controller = createAbortController();
           session.lockGeneration(controller);
 
           try {
-              // 1. 锁死之后，开始做耗时的前置任务（联网、知识库检索）
+              // 1. 锁死之后 开始做耗时的前置任务（联网、知识库检索）
               await syncModule(session, dynamicConfig);
               await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
               
-              // 2. 耗时任务安全做完，把用户的话正式【登记备案】
+              // 2. 耗时任务安全做完 把用户的话正式【登记备案】
               session.addDynamicMessage("user", processedText, null, userId);
               syncToKnowledgeBase(session, dynamicConfig, sessionKey);
               updateSession(sessionKey, session);
@@ -2198,7 +2208,7 @@ if (loadModuleMatch) {
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
               
-              // 4. AI 顺利回复，把 AI 的话也【登记备案】
+              // 4. AI 顺利回复 把 AI 的话也【登记备案】
               session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
 
               updateSession(sessionKey, session); 
@@ -2209,7 +2219,7 @@ if (loadModuleMatch) {
                   console.error("API请求失败:", error); 
               }
           } finally {
-              // 无论成功还是失败，最后都把锁解开，并处理暂存队列里的排队消息
+              // 无论成功还是失败 最后都把锁解开 并处理暂存队列里的排队消息
               session.unlockGeneration();
               
               while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
