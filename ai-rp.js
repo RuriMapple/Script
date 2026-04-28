@@ -2081,7 +2081,12 @@ if (loadModuleMatch) {
                   lastIdx--;
               }
           }
-          
+
+          // 删除轮数完成后，清理末尾多余的 user 消息
+while (session.dynamicContent.length > 0 && 
+       session.dynamicContent[session.dynamicContent.length - 1].role === 'user') {
+    session.dynamicContent.pop();
+}
           session.fullHistory = session.fullHistory.filter(m => 
               m._type !== 'dynamic' || session.dynamicContent.some(d => d.timestamp === m.timestamp && d.role === m.role));
               
