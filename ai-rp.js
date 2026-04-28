@@ -317,7 +317,7 @@ if (!seal.ext.find("AI-role")) {
           } else {
             const cardKey = key.substring(9); 
             return this.lockedContents.roleCards[cardKey]
-              ? { role: "system", content: `<investigator>\n${this.lockedContents.roleCards[cardKey].content}\n</investigator>`, _type: `locked_rolecard_${cardKey}` }
+              ? { role: "system", content: `<角色卡>\n${this.lockedContents.roleCards[cardKey].content}\n</角色卡>`, _type: `locked_rolecard_${cardKey}` }
               : null;
           }
         })
