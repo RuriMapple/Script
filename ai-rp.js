@@ -1419,15 +1419,24 @@ const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {
         return `${roleLabel}: ${content}`;
     });
     try {
-      const response = await fetch("https://dpaste.com/api/v2/", {
+    try {
+      const backendUrl = "https://pastedl.syocars.workers.dev"; 
+      const fileNameSafe = sessionName || "当前对话记录";
+      
+      const response = await fetch(`${backendUrl}/upload`, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `content=${encodeURIComponent(messages.join("\n\n\n"))}&expiry_days=7`
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+            content: messages.join("\n\n\n"),
+            filename: fileNameSafe 
+        })
       });
+      
       if (!response.ok) throw new Error(`✧ 服务响应异常 ${response.status}`);
-      const downloadUrl = (await response.text()).trim();
+      const data = await response.json();
       const title = sessionName ? `「${sessionName}」` : "当前对话记录";
-      return `✧ 导出${title}成功\n阅览地址：${downloadUrl}\n下载地址：${downloadUrl}.txt\n(链接有效期：7天)\n\n请在浏览器打开另存为下载`;
+      
+      return `✧ 导出${title}成功\n下载地址：${data.url}\n(链接有效期：30天)\n\n请直接点击链接，系统会自动触发下载`;
     } catch (error) { console.error("✧ 导出会话失败 ", error); return `✧导出失败  ${error.message}`; }
   }
 
@@ -1771,13 +1780,20 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
       try {
-        const response = await fetch("https://dpaste.com/api/v2/", {
-          method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `content=${encodeURIComponent(exportText.trim())}&expiry_days=7`
+        const backendUrl = "https://pastedl.syocars.workers.dev"; 
+        
+        const response = await fetch(`${backendUrl}/upload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+             content: exportText.trim(),
+             filename: "系统提示配置导出"
+          })
         });
+        
         if (!response.ok) throw new Error(`服务响应异常 ${response.status}`);
-        const downloadUrl = (await response.text()).trim();
-        seal.replyToSender(ctx, msg, `✧ 导出系统提示成功\n阅览地址：${downloadUrl}\n下载地址：${downloadUrl}.txt\n(链接有效期：7天)\n\n请在浏览器打开另存为下载`);
+        const data = await response.json();
+        seal.replyToSender(ctx, msg, `✧ 导出系统提示成功\n下载地址：${data.url}\n(链接有效期：30天)\n\n请直接点击链接，系统会自动触发下载`);
       } catch (error) { 
         console.error("导出系统提示失败", error); 
         seal.replyToSender(ctx, msg, `✧导出系统提示失败 ${error.message}`); 
