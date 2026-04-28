@@ -2119,11 +2119,34 @@ while (session.dynamicContent.length > 0 &&
           session.ragContext = null;
           rollbackStatusBar(session, dynamicConfig);
           
+                    // ... 前面的删除本地轮数代码保持不变 ...
+          
           if (session.isGenerating && session.abortController) {
               session.abortController.abort();
           }
           session.unlockGeneration();
           updateSession(sessionKey, session);
+          
+          // ==============================
+          // [新增逻辑] 立即对齐云端知识库
+          // ==============================
+          if (session.dynamicContent.length === 0) {
+              // 如果轮数被删光了，直接调用云端清理接口
+              const syncApiUrlForClear = session.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
+              if (syncApiUrlForClear) {
+                  const clearUrl = syncApiUrlForClear.replace(/\/sync\/?$/, '/clear');
+                  fetch(clearUrl, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ sessionId: sessionKey })
+                  }).catch(() => {}); // 静默处理
+              }
+          } else {
+              // 如果还有剩余轮数，立即推送截断后的历史给云端进行覆写
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+          }
+          // ==============================
+
           seal.replyToSender(ctx, msg, `✧ 已删除「 ${deleteRounds} 」轮对话 已清理关联网页缓存与知识库下挂`);
           return;
       }
