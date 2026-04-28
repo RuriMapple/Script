@@ -1419,7 +1419,6 @@ const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {
         return `${roleLabel}: ${content}`;
     });
     try {
-    try {
       const backendUrl = "https://pastedl.syocars.workers.dev"; 
       const fileNameSafe = sessionName || "当前对话记录";
       
