@@ -2443,7 +2443,8 @@ if (loadModuleMatch) {
         }
       }
 
-      const msgId = msg.rawId || msg.messageId; 
+      const msgId = msg.rawId || msg.messageId;
+if (debugMode) console.log("✧ msgId取值:", msgId, "rawId:", msg.rawId, "messageId:", msg.messageId); 
       for (let i = 0; i < chunks.length; i++) {
         const segments = [];
         if (useReply && msgId && i === 0) { segments.push(`[CQ:reply,id=${msgId}]`); }
