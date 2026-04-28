@@ -1205,7 +1205,11 @@ const scrapeResults = rawContents.map((content, index) => {
 
         // 发送给处理状态栏的流程时 传入拼接合并后的 combinedAnchor0
         const statusBarPrompt = dynConfig.statusBarPrefix + "\n\nuser: \n" + latestUserInput + "\n\nassistant: \n" + aiReply + "\n\n当前状态: \n" + combinedAnchor0;
-        const newStatusBarRes = await sendPublicAPIRequest(session, [{role: "user", content: statusBarPrompt}], dynConfig);
+        const recentHistory = session.dynamicContent.slice(-4).map(m => ({
+    role: m.role,
+    content: typeof m.content === 'string' ? m.content : ""
+}));
+const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: statusBarPrompt}], dynConfig);
         
         if (newStatusBarRes) {
             const codeBlockMatch = newStatusBarRes.match(/```[\s\S]*?```/);
