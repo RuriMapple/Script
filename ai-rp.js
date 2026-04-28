@@ -2009,6 +2009,7 @@ if (loadModuleMatch) {
           const lastMsg = session.dynamicContent[session.dynamicContent.length - 1];
 
           if (lastMsg && lastMsg.role === 'assistant') {
+              // 1. 正常弹出并清理最后一条 AI 的回复
               const deletedMsg = session.dynamicContent.pop();
               for (let i = session.fullHistory.length - 1; i >= 0; i--) {
                   if (session.fullHistory[i]._type === 'dynamic' && session.fullHistory[i].role === 'assistant' && session.fullHistory[i].timestamp === deletedMsg.timestamp) {
@@ -2017,10 +2018,30 @@ if (loadModuleMatch) {
                   }
               }
               rollbackStatusBar(session, dynamicConfig);
+
+              // 2. [核心修复]：向上追溯，清理因网络波动或连点导致堆叠的相同用户消息
+              while (session.dynamicContent.length >= 2) {
+                  const tail1 = session.dynamicContent[session.dynamicContent.length - 1];
+                  const tail2 = session.dynamicContent[session.dynamicContent.length - 2];
+                  // 如果连续两条都是 user 且内容完全一致，则判定为冗余堆叠
+                  if (tail1.role === 'user' && tail2.role === 'user' && tail1.content === tail2.content) {
+                      const dupMsg = session.dynamicContent.pop();
+                      for (let i = session.fullHistory.length - 1; i >= 0; i--) {
+                          if (session.fullHistory[i]._type === 'dynamic' && session.fullHistory[i].timestamp === dupMsg.timestamp) {
+                              session.fullHistory.splice(i, 1);
+                              break;
+                          }
+                      }
+                  } else {
+                      break;
+                  }
+              }
+              
           } else if (!lastMsg || lastMsg.role !== 'user') {
               seal.replyToSender(ctx, msg, "✧ 没有找到可重新生成的回复");
               return;
           }
+
 
           const controller = createAbortController();
           session.lockGeneration(controller);
