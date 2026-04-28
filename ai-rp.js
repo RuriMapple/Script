@@ -2460,7 +2460,6 @@ while (session.dynamicContent.length > 0 &&
       
       for (let i = 0; i < chunks.length; i++) {
         const segments = [];
-
         if (useReply && msgId && i === 0 && !ctx.isPrivate) { 
             segments.push(`[CQ:reply,id=${msgId}]`); 
         }
