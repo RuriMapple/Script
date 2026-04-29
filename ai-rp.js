@@ -1099,25 +1099,28 @@ if (!seal.ext.find("AI-role")) {
               model: currentModel,
               temperature: 0.3,
               messages: messagesContext,
-              tools: [
-                  {
-                      type: "function",
-                      function: {
-                          name: "web_search",
-                          description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
-                          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                      }
-                  },
-                  {
-                      type: "function",
-                      function: {
-                          name: "read_link",
-                          description: "读取指定网页链接的详细文本内容。当搜索结果不足以提供完整信息，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
-                          parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
-                      }
-                  }
-              ],
-              tool_choice: "auto"
+              
+              // ====== ⬇️ 暂时注释掉自定义工具 避免API网关短路 ⬇️ ======
+              // tools: [
+              //     {
+              //         type: "function",
+              //         function: {
+              //             name: "web_search",
+              //             description: "使用搜索引擎查询实时信息...",
+              //             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+              //         }
+              //     },
+              //     {
+              //         type: "function",
+              //         function: {
+              //             name: "read_link",
+              //             description: "读取指定网页链接的详细文本内容...",
+              //             parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
+              //         }
+              //     }
+              // ],
+              // tool_choice: "auto"
+              // ====== ⬆️ 注释结束 ⬆️ ======
           };
 
           let iteration = 0;
@@ -1126,7 +1129,6 @@ if (!seal.ext.find("AI-role")) {
 
           while (iteration < MAX_ITERS) {
               iteration++;
-              if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
 
               try {
                   const response = await safeFetchWithTimeout(apiUrl, {
@@ -1138,57 +1140,20 @@ if (!seal.ext.find("AI-role")) {
                   const data = await response.json();
                   const msgObj = data.choices[0].message;
 
+                  // ====== ⬇️ 暂时注释掉工具处理逻辑，直接当普通文本接收 ⬇️ ======
+                  /*
                   if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
-                      messagesContext.push(msgObj);
-                      for (let tc of msgObj.tool_calls) {
-                          if (["web_search", "google_search"].includes(tc.function.name)) {
-                              let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
-                              let searchRes = await performSerperSearch(args.query || "");
-                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
-                          } else if (tc.function.name === "read_link") {
-                              let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
-                              
-                              let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
-                              
-                              const pConfig = session?.personalConfig || {};
-                              const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
-
-                              if (enableImage && pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
-                                  const { topImages, cleanedMarkdown } = filterAndScoreImages(pageRes);
-                                  let uniqueWebImages = [...new Set(topImages.map(img => img.url))].filter(url => url.startsWith('http')).slice(0, 10);
-                                  
-                                  if (uniqueWebImages.length > 0) {
-                                      let contentArray = [ { type: "text", text: cleanedMarkdown } ];
-                                      const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
-                                      const transResults = await Promise.all(transTasks);
-                                      
-                                      let successCount = 0;
-                                      transResults.forEach(b64 => {
-                                          if (b64 && b64.startsWith('data:image')) {
-                                              contentArray.push({ type: "image_url", image_url: { url: b64 } });
-                                              successCount++;
-                                          }
-                                      });
-                                      
-                                      if (dynConfig.debugMode) console.log(`✧ 读取网页图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片`);
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: contentArray });
-                                  } else {
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
-                                  }
-                              } else {
-                                  messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
-                              }
-                          } else {
-                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
-                          }
-                      }
+                      // ... (这里原本是处理 web_search 和 read_link 的代码) ...
                   } else {
+                  */
                       finalOutput = msgObj.content || "";
                       success = true;
-                      break;
+                      break; // 拿到文本直接退出循环
+                  /*
                   }
+                  */
+                  // ====== ⬆️ 注释结束 ⬆️ ======
+
               } catch (e) {
                   if (dynConfig.debugMode) console.error(`✧ API联网搜链异常 模型 ${currentModel}:`, e);
                   break;
@@ -1355,25 +1320,11 @@ if (!seal.ext.find("AI-role")) {
                       model: currentModel,
                       temperature: dynConfig.temperature,
                       messages: messagesContext,
-                      tools: [
-                          {
-                              type: "function",
-                              function: {
-                                  name: "web_search",
-                                  description: "使用搜索引擎查询书籍、文学作品、作者、标志段落等相关信息。当需要为当前对话寻找最匹配的参考书籍时使用此工具。",
-                                  parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                              }
-                          },
-                          {
-                              type: "function",
-                              function: {
-                                  name: "read_link",
-                                  description: "读取指定网页链接的详细文本内容。当搜索结果不足以提供完整信息，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
-                                  parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
-                              }
-                          }
-                      ],
-                      tool_choice: "auto"
+                      
+                      // ====== ⬇️ 暂时注释掉自定义工具 ⬇️ ======
+                      // tools: [ ... ],
+                      // tool_choice: "auto"
+                      // ====== ⬆️ 注释结束 ⬆️ ======
                   };
 
                   let iteration = 0;
@@ -1382,7 +1333,6 @@ if (!seal.ext.find("AI-role")) {
 
                   while (iteration < MAX_ITERS) {
                       iteration++;
-                      if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
 
                       try {
                           const response = await safeFetchWithTimeout(dynConfig.publicApiUrl, {
@@ -1394,57 +1344,17 @@ if (!seal.ext.find("AI-role")) {
                           const data = await response.json();
                           const msgObj = data.choices[0].message;
 
-                          if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
-                              messagesContext.push(msgObj);
-                              for (let tc of msgObj.tool_calls) {
-                                  if (["web_search", "google_search"].includes(tc.function.name)) {
-                                      let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                                      if (dynConfig.debugMode) console.log(`✧ 文风总结联网 工具请求: ${args.query}`);
-                                      let searchRes = await performSerperSearch(args.query || "");
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
-                                  } else if (tc.function.name === "read_link") {
-                                      let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                                      if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
-                                      
-                                      let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
-                                      
-                                      const pConfig = session?.personalConfig || {};
-                                      const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
-
-                                      if (enableImage && pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
-                                          const { topImages, cleanedMarkdown } = filterAndScoreImages(pageRes);
-                                          let uniqueWebImages = [...new Set(topImages.map(img => img.url))].filter(url => url.startsWith('http')).slice(0, 10);
-                                          
-                                          if (uniqueWebImages.length > 0) {
-                                              let contentArray = [ { type: "text", text: cleanedMarkdown } ];
-                                              const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
-                                              const transResults = await Promise.all(transTasks);
-                                              
-                                              let successCount = 0;
-                                              transResults.forEach(b64 => {
-                                                  if (b64 && b64.startsWith('data:image')) {
-                                                      contentArray.push({ type: "image_url", image_url: { url: b64 } });
-                                                      successCount++;
-                                                  }
-                                              });
-                                              
-                                              if (dynConfig.debugMode) console.log(`✧ 读取网页图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片`);
-                                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: contentArray });
-                                          } else {
-                                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
-                                          }
-                                      } else {
-                                          messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
-                                      }
-                                  } else {
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
-                                  }
-                              }
-                          } else {
+                          // ====== ⬇️ 暂时注释掉工具处理逻辑，直接当普通文本接收 ⬇️ ======
+                          /*
+                          if (msgObj.tool_calls && msgObj.tool_calls.length > 0) { ... } else {
+                          */
                               result = msgObj.content || "";
                               success = true;
                               break;
+                          /*
                           }
+                          */
+                          // ====== ⬆️ 注释结束 ⬆️ ======
                       } catch (e) {
                           if (dynConfig.debugMode) console.error(`✧ 文风总结联网异常 模型 ${currentModel}:`, e);
                           break;
@@ -1468,6 +1378,7 @@ if (!seal.ext.find("AI-role")) {
           console.error("✧ 文风总结异常", e);
       }
   }
+
 
 
   // === 状态栏与主线快照 防并发竞态回滚 ===
