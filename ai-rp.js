@@ -1485,6 +1485,7 @@ if (!seal.ext.find("AI-role")) {
     let rendered = originalText
       .replace(/\*\*([\s\S]*?)\*\*/g, '「$1」') 
       .replace(/---/g, '⊹═══') 
+      .replace(/***/g, '⊹⊹⊹') 
       .replace(/^(\s*)(#+)/gm, (match, space, hashes) => space + '✦'.repeat(hashes.length)) 
       .replace(/^(\s*)(?:-|\*)\s/gm, '$1⊹ ') 
       .replace(/[【】]/g, '◈') 
