@@ -29,7 +29,8 @@ if (!seal.ext.find("AI-role")) {
   // 公开API配置项
   seal.ext.registerStringConfig(ext, "公开API密钥", "");
   seal.ext.registerStringConfig(ext, "公开API端点", "");
-  seal.ext.registerStringConfig(ext, "公开模型名称", "");
+seal.ext.registerStringConfig(ext, "公开模型名称", "");
+seal.ext.registerStringConfig(ext, "公开API上下文轮数", "2");
 
   seal.ext.registerStringConfig(ext, "模组", "");
   seal.ext.registerStringConfig(ext, "外部模组服务地址", "http" + "://127.0.0.1:8080/modules/"); 
@@ -66,6 +67,8 @@ if (!seal.ext.find("AI-role")) {
   // === 知识库检索与解耦生成相关配置 ===
   seal.ext.registerBoolConfig(ext, "开启知识库检索", false);
   seal.ext.registerStringConfig(ext, "知识库检索API", "");
+seal.ext.registerBoolConfig(ext, "开启文风总结", false);
+seal.ext.registerStringConfig(ext, "文风总结前缀", "请根据以下对话内容，提取当前最适合的参考书籍：\n");
   seal.ext.registerStringConfig(ext, "语义压缩前缀", "请提取以下用户输入的核心内容与意图 以利于向量检索（无需任何解释和客套话 直接返回短语）：\n");
   seal.ext.registerStringConfig(ext, "状态栏生成前缀", "请根据最新一轮AI的回答 结合原有的代码块状态 生成最新的状态栏 且必须使用```代码块包裹返回：\n");
 
@@ -122,6 +125,7 @@ if (!seal.ext.find("AI-role")) {
       this.publicApiKey = seal.ext.getStringConfig(this.ext, "公开API密钥");
       this.publicApiUrl = seal.ext.getStringConfig(this.ext, "公开API端点");
       this.publicModelName = seal.ext.getStringConfig(this.ext, "公开模型名称");
+this.publicContextRounds = parseInt(seal.ext.getStringConfig(this.ext, "公开API上下文轮数")) || 2;
       this.maxTokens = parseInt(seal.ext.getStringConfig(this.ext, "最大回复tokens数")) || 1000;
       this.maxChars = parseInt(seal.ext.getStringConfig(this.ext, "最大回复字符数")) || 1000;
       const roundsStr = seal.ext.getStringConfig(this.ext, "存储上下文轮数");
@@ -152,7 +156,8 @@ if (!seal.ext.find("AI-role")) {
       this.kbQueryApi = seal.ext.getStringConfig(this.ext, "知识库检索API");
       this.semanticPrefix = seal.ext.getStringConfig(this.ext, "语义压缩前缀");
       this.statusBarPrefix = seal.ext.getStringConfig(this.ext, "状态栏生成前缀");
-
+this.enableStyleSummary = seal.ext.getBoolConfig(this.ext, "开启文风总结");
+this.styleSummaryPrefix = seal.ext.getStringConfig(this.ext, "文风总结前缀");
       this.imgTransApi = seal.ext.getStringConfig(this.ext, "图片转码API");
       this.clearCmd = seal.ext.getStringConfig(this.ext, "清除触发词");
       this.clearMsg = seal.ext.getStringConfig(this.ext, "清除成功提示");
@@ -233,6 +238,7 @@ if (!seal.ext.find("AI-role")) {
       this.dynamicContent = [];
       this.fullHistory = [];
       this.ragContext = null; 
+this.styleContext = null;
       this.webSearchContext = null; 
       
       this.isGenerating = false;
@@ -246,6 +252,7 @@ if (!seal.ext.find("AI-role")) {
   presence_penalty: null, frequency_penalty: null, seed: null,
   depth: null, filterIdEnabled: null, enableImage: null, debugMode: null, 
   enableNetwork: null, pushModuleToKB: null, maxNetworkIterations: null, webpageMaxLength: null,
+enableStyleSummary: null,
   enableKBSync: null, kbSyncApi: null,
   enableKBQuery: null, kbQueryApi: null,
   maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
@@ -329,23 +336,24 @@ if (!seal.ext.find("AI-role")) {
         ? [{ role: "system", content: pConfig.systemPrompt, _type: "personal_system" }] 
         : this.anchor.coreMessages;
 
-      if (this.ragContext) {
-          coreMsgs.push({ role: "system", content: this.ragContext, _type: "rag_context" });
-      }
+if (this.ragContext) {
+    coreMsgs.push({ role: "system", content: this.ragContext, _type: "rag_context" });
+}
 
-      if (this.webSearchContext) {
-          coreMsgs.push({ role: "user", content: this.webSearchContext, _type: "web_search_context" });
-      }
+if (this.styleContext) {
+    coreMsgs.push({ role: "system", content: this.styleContext, _type: "style_context" });
+}
+
+if (this.webSearchContext) {
+    coreMsgs.push({ role: "user", content: this.webSearchContext, _type: "web_search_context" });
+}
 
       const anchorGroup = [...lockedMessages, ...coreMsgs];
       let originalDynamic = this.dynamicContent;
       const rounds = (pConfig.contextRounds !== null && pConfig.contextRounds !== undefined) ? pConfig.contextRounds : this.config.contextRounds;
-      if (rounds !== null && rounds !== undefined) {
-        const messagesToKeep = rounds * 2;
-        if (originalDynamic.length > messagesToKeep) {
-          originalDynamic = originalDynamic.slice(-messagesToKeep);
-        }
-      }
+if (rounds !== null && rounds !== undefined) {
+  originalDynamic = getLastNRounds(originalDynamic, rounds);
+}
 
       let dynamicClone = JSON.parse(JSON.stringify(originalDynamic));
       
@@ -415,23 +423,18 @@ if (!seal.ext.find("AI-role")) {
       
       const isPureMode = (pConfig.pureModeEnabled !== null && pConfig.pureModeEnabled !== undefined) ? pConfig.pureModeEnabled : this.config.pureModeEnabled;
       
-      if (isPureMode) {
-        let dynamicIndices = [];
-        mergedMessages.forEach((msg, idx) => {
-          if (msg._type === "dynamic") {
-            dynamicIndices.push(idx);
-          }
-        });
-        const keepIndices = dynamicIndices.slice(-4); 
+if (isPureMode) {
+  const protectedMsgs = getLastNRounds(originalDynamic, 2);
+  const protectedTimestamps = new Set(protectedMsgs.map(m => m.timestamp));
 
-        mergedMessages = mergedMessages.map((msg, idx) => {
-          if (msg._type === "dynamic" && !keepIndices.includes(idx)) {
-            const { pureText } = filterContent(msg.content);
-            return { ...msg, content: pureText };
-          }
-          return msg;
-        });
-      }
+  mergedMessages = mergedMessages.map((msg) => {
+    if (msg._type === "dynamic" && !protectedTimestamps.has(msg.timestamp)) {
+      const { pureText } = filterContent(msg.content);
+      return { ...msg, content: pureText };
+    }
+    return msg;
+  });
+}
 
       const isFilterId = (pConfig.filterIdEnabled !== null && pConfig.filterIdEnabled !== undefined)
         ? pConfig.filterIdEnabled
@@ -620,8 +623,35 @@ function filterContent(originalContent) {
         codeBlocks.push(innerCode.trim()); 
         return ""; 
     }).trim();
-      
+
+// 改为
     return { filteredContent, thinkingContent, codeBlocks, pureText };
+}
+
+function getLastNRounds(dynamicContent, rounds) {
+    let msgs = [...dynamicContent];
+    let result = [];
+    let remaining = rounds;
+
+    let tail = [];
+    while (msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
+        tail.unshift(msgs.pop());
+    }
+
+    while (remaining > 0 && msgs.length > 0) {
+        let aiIdx = -1;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'assistant') { aiIdx = i; break; }
+        }
+        if (aiIdx === -1) break;
+        let start = aiIdx;
+        while (start - 1 >= 0 && msgs[start - 1].role === 'user') start--;
+        result.unshift(...msgs.splice(start, aiIdx - start + 1));
+        remaining--;
+    }
+
+    result.push(...tail);
+    return result;
 }
 
   function isSupportedImageFormat(urlOrBase64) {
@@ -1080,10 +1110,11 @@ const scrapeResults = rawContents.map((content, index) => {
       const models = modelNameRaw.split(/[\s]+|\\n|\\r/).filter(m => m.trim() !== "");
       let finalOutput = "";
 
-      const recentHistoryMsgs = session.dynamicContent.slice(-4).map(msg => ({
-          role: msg.role === "user" ? "user" : "assistant",
-          content: msg.content 
-      }));
+
+const recentHistoryMsgs = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(msg => ({
+    role: msg.role === "user" ? "user" : "assistant",
+    content: msg.content
+}));
 
       const messagesContextRaw = [
           ...recentHistoryMsgs,
@@ -1205,7 +1236,8 @@ const scrapeResults = rawContents.map((content, index) => {
 
         // 发送给处理状态栏的流程时 传入拼接合并后的 combinedAnchor0
         const statusBarPrompt = dynConfig.statusBarPrefix + "\n\nuser: \n" + latestUserInput + "\n\nassistant: \n" + aiReply + "\n\n当前状态: \n" + combinedAnchor0;
-        const recentHistory = session.dynamicContent.slice(-4).map(m => ({
+
+const recentHistory = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(m => ({
     role: m.role,
     content: typeof m.content === 'string' ? m.content : ""
 }));
@@ -1233,7 +1265,35 @@ const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {
         console.error("✧ 状态栏提取异常", e);
     }
 }
+async function updateStyleSummary(session, dynConfig) {
+    const pConfig = session.personalConfig || {};
+    const enableStyle = (pConfig.enableStyleSummary !== null && pConfig.enableStyleSummary !== undefined)
+        ? pConfig.enableStyleSummary
+        : dynConfig.enableStyleSummary;
 
+    if (!enableStyle) return;
+
+    try {
+        // 取最近2轮（含末尾未配对user）作为总结素材
+        const rounds = getLastNRounds(session.dynamicContent, 2);
+        if (rounds.length === 0) return;
+
+        const historyText = rounds.map(m => {
+            const { pureText } = filterContent(typeof m.content === 'string' ? m.content : "");
+            return `${m.role === 'user' ? 'user' : 'assistant'}: ${pureText}`;
+        }).join('\n');
+
+        const prompt = dynConfig.styleSummaryPrefix + '\n' + historyText;
+        const result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
+
+        if (result && result.trim() !== '') {
+            session.styleContext = `<book_refs>\n${result.trim()}\n</book_refs>`;
+            if (dynConfig.debugMode) console.log("✧ 文风总结 已更新:\n" + session.styleContext);
+        }
+    } catch (e) {
+        console.error("✧ 文风总结异常", e);
+    }
+}
   // === 状态栏回滚函数 ===
   function rollbackStatusBar(session, dynConfig) {
       let lastValidAnchor = dynConfig.fixedAnchors[0] || ""; 
@@ -1563,6 +1623,7 @@ API密钥: ${formatMasked(p.apiKey)}
 知识库同步API: ${formatMasked(p.kbSyncApi)}
 知识库检索: ${formatBool(p.enableKBQuery)}
 知识库检索API: ${formatMasked(p.kbQueryApi)}
+文风总结: ${formatBool(p.enableStyleSummary)} 
 最大回复tokens数: ${formatVal(p.maxTokens)}
 最大回复字符数: ${formatVal(p.maxChars)}
 网页抓取最大字符数: ${formatVal(p.webpageMaxLength)}
@@ -1630,6 +1691,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         { on: "开启向知识库推送模组", off: "关闭向知识库推送模组", key: "pushModuleToKB", label: "向知识库推送模组" },
         { on: "开启知识库同步", off: "关闭知识库同步", key: "enableKBSync", label: "知识库同步" },
         { on: "开启知识库检索", off: "关闭知识库检索", key: "enableKBQuery", label: "知识库检索" },
+{ on: "开启文风总结", off: "关闭文风总结", key: "enableStyleSummary", label: "文风总结" },
         { on: "关闭识别码", off: "开启识别码", key: "filterIdEnabled", label: "识别码过滤" }
       ];
       
@@ -1714,7 +1776,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
   apiUrl: null, apiKey: null, modelName: null, 
   pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null, pushModuleToKB: null,
   maxNetworkIterations: null, webpageMaxLength: null, enableKBSync: null, kbSyncApi: null,
-  enableKBQuery: null, kbQueryApi: null,
+  enableKBQuery: null, kbQueryApi: null,enableStyleSummary: null,
   temperature: null, top_p: null, top_k: null,
   presence_penalty: null, frequency_penalty: null, seed: null,
   depth: null, filterIdEnabled: null,
@@ -1738,6 +1800,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
             "网页抓取最大字符数": "webpageMaxLength", "联网最大迭代次数": "maxNetworkIterations",
             "知识库同步": "enableKBSync", "开启知识库同步": "enableKBSync", "知识库同步api": "kbSyncApi",
             "知识库检索": "enableKBQuery", "开启知识库检索": "enableKBQuery", "知识库检索api": "kbQueryApi",
+"文风总结": "enableStyleSummary",
             "最大回复tokens数": "maxTokens", "最大回复字符数": "maxChars", "存储上下文轮数": "contextRounds",
             "温度": "temperature", "temperature": "temperature", "top-p": "top_p", "top-k": "top_k",
             "presence penalty": "presence_penalty", "frequency penalty": "frequency_penalty", "随机种子": "seed",
@@ -1779,7 +1842,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
       try {
-        const backendUrl = "https://pastedl.syocars.workers.dev"; 
+        const backendUrl = "https://pastedl..workers.dev"; 
         
         const response = await fetch(`${backendUrl}/upload`, {
           method: "POST",
@@ -2070,7 +2133,9 @@ if (loadModuleMatch) {
                   if (typeof processedText === 'string') {
                       processedText = processedText.replace(/^\(.*?\)\s*/, ""); 
                   }
+
                   await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
+                  await updateStyleSummary(session, dynamicConfig);
               }
 
               syncToKnowledgeBase(session, dynamicConfig, sessionKey);
@@ -2130,8 +2195,9 @@ while (session.dynamicContent.length > 0 &&
           session.fullHistory = session.fullHistory.filter(m => 
               m._type !== 'dynamic' || session.dynamicContent.some(d => d.timestamp === m.timestamp && d.role === m.role));
               
-          session.webSearchContext = null;
-          session.ragContext = null;
+session.webSearchContext = null;
+session.ragContext = null;
+session.styleContext = null;
           rollbackStatusBar(session, dynamicConfig);
           
                     // ... 前面的删除本地轮数代码保持不变 ...
@@ -2165,7 +2231,58 @@ while (session.dynamicContent.length > 0 &&
           seal.replyToSender(ctx, msg, `✧ 已删除「 ${deleteRounds} 」轮对话 已清理关联网页缓存与知识库下挂`);
           return;
       }
+// === 精确删除条数（倒序逐条） ===
+const deleteCountMatch = text.match(/^删除条数\s*(\d+)$/i);
+if (deleteCountMatch) {
+    const countToDel = parseInt(deleteCountMatch[1], 10);
+    let session = getSession(sessionKey);
+    if (isNaN(countToDel) || countToDel <= 0)
+        return seal.replyToSender(ctx, msg, "✧ 无效条数");
 
+    const available = session.dynamicContent.length;
+    if (available === 0)
+        return seal.replyToSender(ctx, msg, "✧ 无对话可删除");
+
+    const actual = Math.min(countToDel, available);
+    // 从尾部逐条弹出
+    for (let i = 0; i < actual; i++) {
+        session.dynamicContent.pop();
+    }
+    // 同步 fullHistory
+    session.fullHistory = session.fullHistory.filter(m =>
+        m._type !== 'dynamic' ||
+        session.dynamicContent.some(d => d.timestamp === m.timestamp && d.role === m.role)
+    );
+
+session.webSearchContext = null;
+session.ragContext = null;
+session.styleContext = null; 
+    rollbackStatusBar(session, dynamicConfig);
+
+    if (session.isGenerating && session.abortController) {
+        session.abortController.abort();
+    }
+    session.unlockGeneration();
+    updateSession(sessionKey, session);
+
+    // 同步云端知识库
+    const syncApiForCount = session.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
+    if (session.dynamicContent.length === 0) {
+        if (syncApiForCount) {
+            const clearUrl = syncApiForCount.replace(/\/sync\/?$/, '/clear');
+            fetch(clearUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sessionId: sessionKey })
+            }).catch(() => {});
+        }
+    } else {
+        syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+    }
+
+    seal.replyToSender(ctx, msg, `✧ 已从末尾精确删除「 ${actual} 」条消息（倒序逐条）`);
+    return;
+}
       const showMatch = text.match(/^显示轮数\s*(\d+)$/i);
       if (showMatch) {
           const roundsToShow = parseInt(showMatch[1], 10);
@@ -2264,8 +2381,10 @@ while (session.dynamicContent.length > 0 &&
 
           try {
               // 1. 锁死之后 开始做耗时的前置任务（联网、知识库检索）
+
               await syncModule(session, dynamicConfig);
               await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
+              await updateStyleSummary(session, dynamicConfig);
               
               // 2. 耗时任务安全做完 把用户的话正式【登记备案】
               session.addDynamicMessage("user", processedText, null, userId);
@@ -2290,35 +2409,44 @@ while (session.dynamicContent.length > 0 &&
               // 无论成功还是失败 最后都把锁解开 并处理暂存队列里的排队消息
               session.unlockGeneration();
               
-              while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
-                  const pendingSnapshot = [...session.pendingUserMessages];
-                  session.pendingUserMessages = []; 
-                  
-                  for (const pm of pendingSnapshot) {
-                      session.addDynamicMessage('user', pm.content, pm.filteredContent, pm.userId);
-                  }
-                  
-                  const subController = createAbortController();
-                  session.lockGeneration(subController);
-                  
-                  try {
-                      await syncModule(session, dynamicConfig);
-                      await executeContextTasks(session, pendingSnapshot[pendingSnapshot.length - 1].content, pendingSnapshot[pendingSnapshot.length - 1].userId, sessionKey, dynamicConfig, ctx, msg);
-                      
-                      const payload = session.buildPayload();
-                      const result = await sendOpenAIRequest(payload, ctx, msg, session, subController.signal);
-                      session.addDynamicMessage('assistant', result.originalReply, result.filteredReply);
-                      
-                      updateSession(sessionKey, session);
-                      await updateStatusBar(session, result.originalReply, dynamicConfig);
-                  } catch (error) {
-                      if (error.name !== 'AbortError' && !error.message.includes('aborted')) {
-                          console.error("暂存消息处理失败:", error);
-                      }
-                  } finally {
-                      session.unlockGeneration();
-                  }
-              }
+// ... 位于 handleMessage 函数末尾的 finally 块中
+while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
+    const pendingSnapshot = [...session.pendingUserMessages];
+    session.pendingUserMessages = []; 
+    
+    const subController = createAbortController();
+    session.lockGeneration(subController);
+    
+    try {
+        await syncModule(session, dynamicConfig);
+
+        // 【修改处】合并所有排队消息的文本，确保知识库检索能拿到完整的语义
+        const combinedPendingText = pendingSnapshot.map(pm => pm.content).join("\n");
+        
+        // 将合并后的文本 combinedPendingText 传入上下文任务
+        await executeContextTasks(session, combinedPendingText, pendingSnapshot[pendingSnapshot.length - 1].userId, sessionKey, dynamicConfig, ctx, msg);
+        
+        await updateStyleSummary(session, dynamicConfig);
+        
+        // 依然按照原始顺序逐条存入历史记录，保持对话清晰
+        for (const pm of pendingSnapshot) {
+            session.addDynamicMessage('user', pm.content, pm.filteredContent, pm.userId);
+        }
+        
+        const payload = session.buildPayload();
+        const result = await sendOpenAIRequest(payload, ctx, msg, session, subController.signal);
+        session.addDynamicMessage('assistant', result.originalReply, result.filteredReply);
+        
+        updateSession(sessionKey, session);
+        await updateStatusBar(session, result.originalReply, dynamicConfig);
+    } catch (error) {
+        if (error.name !== 'AbortError' && !error.message.includes('aborted')) {
+            console.error("暂存消息处理失败:", error);
+        }
+    } finally {
+        session.unlockGeneration();
+    }
+}
               updateSession(sessionKey, session);
           }
           return;
