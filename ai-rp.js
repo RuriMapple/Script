@@ -891,8 +891,21 @@ if (!seal.ext.find("AI-role")) {
               try {
                   await new Promise(resolve => setTimeout(resolve, 500));
                   
-                  const compressPrompt = dynConfig.semanticPrefix + "\n" + processedText;
+                  // 1. 提取最近 2 轮历史记录作为语境支撑
+                  const recentRounds = getLastNRounds(session.dynamicContent, 2);
+                  let historyContext = "";
+                  if (recentRounds.length > 0) {
+                      historyContext = "[前文背景]\n" + recentRounds.map(m => {
+                          const { pureText } = filterContent(typeof m.content === 'string' ? m.content : "");
+                          return `${m.role === 'user' ? 'user' : 'assistant'}: ${pureText}`;
+                      }).join('\n') + "\n\n";
+                  }
+
+                  // 2. 组装最终 Prompt (processedText 自身已包含单条或合并后的 tail)
+                  const compressPrompt = dynConfig.semanticPrefix + "\n" + historyContext + "[最新输入]\n" + processedText;
+                  
                   const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
+
                   
                   if (compressedText) {
                       if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", compressedText);
@@ -2508,6 +2521,12 @@ session.styleContext = null;
           let remaining = roundsToShow;
           let msgs = [...session.dynamicContent]; 
           
+          // 1. 新增：先把末尾尚未得到 AI 回复的单方面 user 消息剥离暂存
+          let tail = [];
+          while (msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
+              tail.unshift(msgs.pop());
+          }
+          
           while (remaining > 0 && msgs.length > 0) {
               let aiIdx = -1;
               for (let i = msgs.length - 1; i >= 0; i--) {
@@ -2521,6 +2540,11 @@ session.styleContext = null;
               displayRounds.unshift(roundMsgs); 
               msgs.splice(start, roundMsgs.length);
               remaining--;
+          }
+          
+          // 2. 新增：将暂存的最新用户消息追加到最后
+          if (tail.length > 0) {
+              displayRounds.push(tail);
           }
           
           let formattedHistory = `✧ 最近${displayRounds.length}轮对话记录\n\n`;
