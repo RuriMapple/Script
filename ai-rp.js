@@ -2616,7 +2616,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         const currentModel = models[mIdx];
         replyContent = ""; 
         const payload = {
-          model: currentModel, max_tokens: maxTokens,
+          model: currentModel, //注释掉max_tokens: maxTokens,//不支持参数
           temperature: temperature, top_p: top_p, top_k: top_k, presence_penalty: presence_penalty,
           frequency_penalty: frequency_penalty, seed: seed, stream: enableStream,
         };
