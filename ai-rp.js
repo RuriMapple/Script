@@ -1144,7 +1144,8 @@ if (!seal.ext.find("AI-role")) {
                           if (["web_search", "google_search"].includes(tc.function.name)) {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
                               if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
-                              let searchRes = await performSerperSearch(args.query || "");
+                              let searchRes = await performSerperSearch(args.query || "", dynConfig);
+
                               messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
                           } else if (tc.function.name === "read_link") {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
@@ -1401,7 +1402,7 @@ if (!seal.ext.find("AI-role")) {
                                   if (["web_search", "google_search"].includes(tc.function.name)) {
                                       let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
                                       if (dynConfig.debugMode) console.log(`✧ 文风总结联网 工具请求: ${args.query}`);
-                                      let searchRes = await performSerperSearch(args.query || "");
+                                      let searchRes = await performSerperSearch(args.query || "", dynConfig);
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
                                   } else if (tc.function.name === "read_link") {
                                       let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
