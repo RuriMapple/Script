@@ -1275,7 +1275,7 @@ if (!seal.ext.find("AI-role")) {
       }
   }
 
-  async function updateStyleSummary(session, dynConfig) {
+  async function updateStyleSummary(session, dynConfig, latestUserText = "") {
       const pConfig = session.personalConfig || {};
       const enableStyle = (pConfig.enableStyleSummary !== null && pConfig.enableStyleSummary !== undefined)
           ? pConfig.enableStyleSummary
@@ -1285,15 +1285,17 @@ if (!seal.ext.find("AI-role")) {
 
       try {
           const rounds = getLastNRounds(session.dynamicContent, 2);
-          if (rounds.length === 0) return;
+          if (rounds.length === 0 && !latestUserText) return;
 
           const historyText = rounds.map(m => {
               const { pureText } = filterContent(typeof m.content === 'string' ? m.content : "");
               return `${m.role === 'user' ? 'user' : 'assistant'}: ${pureText}`;
           }).join('\n');
 
-          const prompt = dynConfig.styleSummaryPrefix + '\n' + historyText;
-          
+          const { pureText: cleanTail } = filterContent(latestUserText);
+          const tailText = cleanTail.trim() ? `\nuser: ${cleanTail.trim()}` : "";
+          const prompt = dynConfig.styleSummaryPrefix + '\n' + historyText + tailText;
+
           const isNetworkEnabled = (pConfig.enableNetwork !== null && pConfig.enableNetwork !== undefined) ? pConfig.enableNetwork : dynConfig.enableNetwork;
           let result = "";
 
@@ -1572,7 +1574,7 @@ if (!seal.ext.find("AI-role")) {
         return `${roleLabel}: ${content}`;
     });
     try {
-      const backendUrl = "[https://pastedl.syocars.workers.dev](https://pastedl.syocars.workers.dev)"; 
+      const backendUrl = "https://pastedl.syocars.workers.dev"; 
       const fileNameSafe = sessionName || "当前对话记录";
       
       const response = await fetch(`${backendUrl}/upload`, {
@@ -1937,7 +1939,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
       try {
-        const backendUrl = "[https://pastedl.workers.dev](https://pastedl.workers.dev)"; 
+        const backendUrl = "https://pastedl.workers.dev"; 
         
         const response = await fetch(`${backendUrl}/upload`, {
           method: "POST",
@@ -2233,10 +2235,11 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                       processedText = processedText.replace(/^\(.*?\)\s*/, ""); 
                   }
 
-                  await Promise.all([
-                      executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
-                      updateStyleSummary(session, dynamicConfig)
-                  ]);
+                  // 重新生成分支 —— 不传第三参数
+await Promise.all([
+    executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
+    updateStyleSummary(session, dynamicConfig)
+]);
               }
 
               syncToKnowledgeBase(session, dynamicConfig, sessionKey);
@@ -2489,7 +2492,7 @@ session.styleContext = null;
               await syncModule(session, dynamicConfig);
               await Promise.all([
                   executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
-                  updateStyleSummary(session, dynamicConfig)
+                  updateStyleSummary(session, dynamicConfig, processedText)
               ]);
               
               // 2. 耗时任务安全做完 把用户的话正式【登记备案】
@@ -2535,7 +2538,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         // 将合并后的文本 combinedPendingText 传入上下文任务，并与文风总结并行处理
         await Promise.all([
             executeContextTasks(session, combinedPendingText, pendingSnapshot[pendingSnapshot.length - 1].userId, sessionKey, dynamicConfig, ctx, msg),
-            updateStyleSummary(session, dynamicConfig)
+            updateStyleSummary(session, dynamicConfig, combinedPendingText)
         ]);
         
         // 依然按照原始顺序逐条存入历史记录，保持对话清晰
