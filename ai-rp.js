@@ -1,5 +1,3 @@
-确定一下这不代码对吗我先换个不支持的
-
 // ==UserScript==
 // @name         OpenAI兼容
 // @description  OpenAI兼容插件(自动保存、知识库检索、语义压缩、状态栏自动更新、主线剧情总结及RAG热注入)
