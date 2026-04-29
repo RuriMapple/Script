@@ -1047,8 +1047,8 @@ if (!seal.ext.find("AI-role")) {
           const payload = {
               model: currentModel,
               messages: finalMessages,
-              temperature: dynConfig.temperature,
-              max_tokens: dynConfig.maxTokens
+              temperature: dynConfig.temperature
+              // max_tokens: dynConfig.maxTokens // 已移除以兼容当前API
           };
           try {
               const response = await safeFetchWithTimeout(apiUrl, {
