@@ -1565,12 +1565,25 @@ if (!seal.ext.find("AI-role")) {
         
         if (!response.ok) return "✧ 抓取网页失败 状态码: " + response.status;
         const text = await response.text();
+
+        // === 【新增：乱码防爆盾】 ===
+        // 使用 \ufffd 代表 Unicode 替换字符（即那个黑底菱形问号），这样最安全，不会被编辑器吞掉
+        const garbledCount = (text.match(/\ufffd/g) || []).length;
+        
+        // 如果文本总长度大于100，且乱码率超过 5%，直接判定为编码不兼容，拦截注入
+        if (text.length > 100 && (garbledCount / text.length) > 0.05) {
+             console.error(`✧ 拦截到高浓度乱码网页 (可能是GBK编码): ${url}`);
+             return "✧ 抓取网页失败: 目标网页使用了古老的GBK编码或非标准格式，无法解析内容，请更换其他现代网页参考。";
+        }
+        // ===========================
+
         return text.length > maxLength ? text.substring(0, maxLength) + "\n...[内容过长已截断]" : text;
     } catch (error) {
         console.error("✧ 网页抓取异常 ", error);
         return "✧ 网页抓取执行异常 " + error.message;
     }
   }
+
 
   function renderText(originalText) {
     if (!originalText) return originalText;
