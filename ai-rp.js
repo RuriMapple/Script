@@ -1048,14 +1048,8 @@ if (!seal.ext.find("AI-role")) {
               model: currentModel,
               messages: finalMessages,
               temperature: dynConfig.temperature,
+              max_tokens: dynConfig.maxTokens
           };
-          
-          if (currentModel.includes("o1") || currentModel.includes("o3")) {
-              payload.max_completion_tokens = dynConfig.maxTokens;
-              delete payload.temperature;
-          } else {
-              payload.max_tokens = dynConfig.maxTokens;
-          }
           try {
               const response = await safeFetchWithTimeout(apiUrl, {
                   method: "POST",
@@ -1104,24 +1098,14 @@ if (!seal.ext.find("AI-role")) {
               model: currentModel,
               temperature: 0.3,
               messages: messagesContext,
-              tools: [
-                  {
-                      type: "function",
-                      function: {
-                          name: "web_search",
-                          description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
-                          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                      }
-                  },
-                  {
-                      type: "function",
-                      function: {
-                          name: "read_link",
-                          description: "读取指定网页链接的详细文本内容。当搜索结果不足以提供完整信息，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
-                          parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
-                      }
+              tools: [{
+                  type: "function",
+                  function: {
+                      name: "web_search",
+                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
+                      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
                   }
-              ],
+              }],
               tool_choice: "auto"
           };
 
@@ -1151,40 +1135,6 @@ if (!seal.ext.find("AI-role")) {
                               if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
                               let searchRes = await performSerperSearch(args.query || "");
                               messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
-                          } else if (tc.function.name === "read_link") {
-                              let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
-                              
-                              let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
-                              
-                              const pConfig = session?.personalConfig || {};
-                              const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
-
-                              if (enableImage && pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
-                                  const { topImages, cleanedMarkdown } = filterAndScoreImages(pageRes);
-                                  let uniqueWebImages = [...new Set(topImages.map(img => img.url))].filter(url => url.startsWith('http')).slice(0, 10);
-                                  
-                                  if (uniqueWebImages.length > 0) {
-                                      let contentArray = [ { type: "text", text: cleanedMarkdown } ];
-                                      const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
-                                      const transResults = await Promise.all(transTasks);
-                                      
-                                      let successCount = 0;
-                                      transResults.forEach(b64 => {
-                                          if (b64 && b64.startsWith('data:image')) {
-                                              contentArray.push({ type: "image_url", image_url: { url: b64 } });
-                                              successCount++;
-                                          }
-                                      });
-                                      
-                                      if (dynConfig.debugMode) console.log(`✧ 读取网页图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片`);
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: contentArray });
-                                  } else {
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
-                                  }
-                              } else {
-                                  messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
-                              }
                           } else {
                               messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
                           }
@@ -1214,7 +1164,6 @@ if (!seal.ext.find("AI-role")) {
       if (dynConfig.debugMode) console.log("✧ 提取的纯净链接列表: ", extractedUrls);
       return extractedUrls;
   }
-
 
   async function updateStatusBar(session, aiReply, dynConfig) {
       const enableKBQuery = (session.personalConfig.enableKBQuery !== null && session.personalConfig.enableKBQuery !== undefined) ? session.personalConfig.enableKBQuery : dynConfig.enableKBQuery;
@@ -1360,24 +1309,14 @@ if (!seal.ext.find("AI-role")) {
                       model: currentModel,
                       temperature: dynConfig.temperature,
                       messages: messagesContext,
-                      tools: [
-                          {
-                              type: "function",
-                              function: {
-                                  name: "web_search",
-                                  description: "使用搜索引擎查询书籍、文学作品、作者、标志段落等相关信息。当需要为当前对话寻找最匹配的参考书籍时使用此工具。",
-                                  parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                              }
-                          },
-                          {
-                              type: "function",
-                              function: {
-                                  name: "read_link",
-                                  description: "读取指定网页链接的详细文本内容。当搜索结果不足以提供完整信息，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
-                                  parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
-                              }
+                      tools: [{
+                          type: "function",
+                          function: {
+                              name: "web_search",
+                              description: "使用搜索引擎查询书籍、文学作品、作者、标志段落等相关信息。当需要为当前对话寻找最匹配的参考书籍时使用此工具。",
+                              parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
                           }
-                      ],
+                      }],
                       tool_choice: "auto"
                   };
 
@@ -1407,40 +1346,6 @@ if (!seal.ext.find("AI-role")) {
                                       if (dynConfig.debugMode) console.log(`✧ 文风总结联网 工具请求: ${args.query}`);
                                       let searchRes = await performSerperSearch(args.query || "");
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
-                                  } else if (tc.function.name === "read_link") {
-                                      let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                                      if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
-                                      
-                                      let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
-                                      
-                                      const pConfig = session?.personalConfig || {};
-                                      const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
-
-                                      if (enableImage && pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
-                                          const { topImages, cleanedMarkdown } = filterAndScoreImages(pageRes);
-                                          let uniqueWebImages = [...new Set(topImages.map(img => img.url))].filter(url => url.startsWith('http')).slice(0, 10);
-                                          
-                                          if (uniqueWebImages.length > 0) {
-                                              let contentArray = [ { type: "text", text: cleanedMarkdown } ];
-                                              const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
-                                              const transResults = await Promise.all(transTasks);
-                                              
-                                              let successCount = 0;
-                                              transResults.forEach(b64 => {
-                                                  if (b64 && b64.startsWith('data:image')) {
-                                                      contentArray.push({ type: "image_url", image_url: { url: b64 } });
-                                                      successCount++;
-                                                  }
-                                              });
-                                              
-                                              if (dynConfig.debugMode) console.log(`✧ 读取网页图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片`);
-                                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: contentArray });
-                                          } else {
-                                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
-                                          }
-                                      } else {
-                                          messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
-                                      }
                                   } else {
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
                                   }
@@ -1473,7 +1378,6 @@ if (!seal.ext.find("AI-role")) {
           console.error("✧ 文风总结异常", e);
       }
   }
-
 
   // === 状态栏与主线快照 防并发竞态回滚 ===
   function rollbackAnchors(session, dynConfig) {
@@ -2771,22 +2675,10 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         const currentModel = models[mIdx];
         replyContent = ""; 
         const payload = {
-          model: currentModel,
+          model: currentModel, max_tokens: maxTokens,
           temperature: temperature, top_p: top_p, top_k: top_k, presence_penalty: presence_penalty,
           frequency_penalty: frequency_penalty, seed: seed, stream: enableStream,
         };
-
-        // ✧ 智能兼容层：处理 o1/o3 等不支持 max_tokens 和温度参数的新型推理模型
-        if (currentModel.includes("o1") || currentModel.includes("o3")) {
-            payload.max_completion_tokens = maxTokens;
-            // o1/o3 系列不支持这些参数，必须剔除以免触发 400 报错
-            delete payload.temperature;
-            delete payload.top_p;
-            delete payload.presence_penalty;
-            delete payload.frequency_penalty;
-        } else {
-            payload.max_tokens = maxTokens;
-        }
 
         try {
           let currentPayload = { ...payload, messages: finalMessages };
