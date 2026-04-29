@@ -1098,57 +1098,27 @@ if (!seal.ext.find("AI-role")) {
               model: currentModel,
               temperature: 0.3,
               messages: messagesContext,
-              tools: [{
-                  type: "function",
-                  function: {
-                      name: "web_search",
-                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
-                      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                  }
-              }],
-              tool_choice: "auto"
+              tools: [{ type: "web_search" }] // 使用原生联网
           };
 
-          let iteration = 0;
-          const MAX_ITERS = dynConfig.maxNetworkIterations;
           let success = false;
 
-          while (iteration < MAX_ITERS) {
-              iteration++;
-              if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
-
-              try {
-                  const response = await safeFetchWithTimeout(apiUrl, {
-                      method: "POST",
-                      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-                      body: JSON.stringify({...payload, messages: messagesContext}) 
-                  }, 100000);
-                  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                  const data = await response.json();
-                  const msgObj = data.choices[0].message;
-
-                  if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
-                      messagesContext.push(msgObj);
-                      for (let tc of msgObj.tool_calls) {
-                          if (["web_search", "google_search"].includes(tc.function.name)) {
-                              let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
-                              let searchRes = await performSerperSearch(args.query || "");
-                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
-                          } else {
-                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
-                          }
-                      }
-                  } else {
-                      finalOutput = msgObj.content || "";
-                      success = true;
-                      break;
-                  }
-              } catch (e) {
-                  if (dynConfig.debugMode) console.error(`✧ API联网搜链异常 模型 ${currentModel}:`, e);
-                  break;
-              }
+          try {
+              const response = await safeFetchWithTimeout(apiUrl, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({...payload, messages: messagesContext}) 
+              }, 100000);
+              
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const data = await response.json();
+              
+              finalOutput = data.choices[0].message.content || "";
+              success = true;
+          } catch (e) {
+              if (dynConfig.debugMode) console.error(`✧ API联网搜链异常 模型 ${currentModel}:`, e);
           }
+          
           if (success) break;
       }
 
@@ -1164,6 +1134,7 @@ if (!seal.ext.find("AI-role")) {
       if (dynConfig.debugMode) console.log("✧ 提取的纯净链接列表: ", extractedUrls);
       return extractedUrls;
   }
+
 
   async function updateStatusBar(session, aiReply, dynConfig) {
       const enableKBQuery = (session.personalConfig.enableKBQuery !== null && session.personalConfig.enableKBQuery !== undefined) ? session.personalConfig.enableKBQuery : dynConfig.enableKBQuery;
@@ -1309,60 +1280,30 @@ if (!seal.ext.find("AI-role")) {
                       model: currentModel,
                       temperature: dynConfig.temperature,
                       messages: messagesContext,
-                      tools: [{
-                          type: "function",
-                          function: {
-                              name: "web_search",
-                              description: "使用搜索引擎查询书籍、文学作品、作者、标志段落等相关信息。当需要为当前对话寻找最匹配的参考书籍时使用此工具。",
-                              parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                          }
-                      }],
-                      tool_choice: "auto"
+                      tools: [{ type: "web_search" }] // 使用原生联网
                   };
 
-                  let iteration = 0;
-                  const MAX_ITERS = dynConfig.maxNetworkIterations;
                   let success = false;
 
-                  while (iteration < MAX_ITERS) {
-                      iteration++;
-                      if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
-
-                      try {
-                          const response = await safeFetchWithTimeout(dynConfig.publicApiUrl, {
-                              method: "POST",
-                              headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
-                              body: JSON.stringify({...payload, messages: messagesContext})
-                          }, 100000);
-                          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                          const data = await response.json();
-                          const msgObj = data.choices[0].message;
-
-                          if (msgObj.tool_calls && msgObj.tool_calls.length > 0) {
-                              messagesContext.push(msgObj);
-                              for (let tc of msgObj.tool_calls) {
-                                  if (["web_search", "google_search"].includes(tc.function.name)) {
-                                      let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                                      if (dynConfig.debugMode) console.log(`✧ 文风总结联网 工具请求: ${args.query}`);
-                                      let searchRes = await performSerperSearch(args.query || "");
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
-                                  } else {
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
-                                  }
-                              }
-                          } else {
-                              result = msgObj.content || "";
-                              success = true;
-                              break;
-                          }
-                      } catch (e) {
-                          if (dynConfig.debugMode) console.error(`✧ 文风总结联网异常 模型 ${currentModel}:`, e);
-                          break;
-                      }
+                  try {
+                      const response = await safeFetchWithTimeout(dynConfig.publicApiUrl, {
+                          method: "POST",
+                          headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
+                          body: JSON.stringify({...payload, messages: messagesContext})
+                      }, 100000);
+                      
+                      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                      const data = await response.json();
+                      
+                      result = data.choices[0].message.content || "";
+                      success = true;
+                  } catch (e) {
+                      if (dynConfig.debugMode) console.error(`✧ 文风总结联网异常 模型 ${currentModel}:`, e);
                   }
+                  
                   if (success) break;
               }
-              
+
               if (!result || result.trim() === "") {
                   result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
               }
