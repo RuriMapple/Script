@@ -1048,8 +1048,14 @@ if (!seal.ext.find("AI-role")) {
               model: currentModel,
               messages: finalMessages,
               temperature: dynConfig.temperature,
-              max_tokens: dynConfig.maxTokens
           };
+          
+          if (currentModel.includes("o1") || currentModel.includes("o3")) {
+              payload.max_completion_tokens = dynConfig.maxTokens;
+              delete payload.temperature;
+          } else {
+              payload.max_tokens = dynConfig.maxTokens;
+          }
           try {
               const response = await safeFetchWithTimeout(apiUrl, {
                   method: "POST",
@@ -2765,10 +2771,22 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         const currentModel = models[mIdx];
         replyContent = ""; 
         const payload = {
-          model: currentModel, max_tokens: maxTokens,
+          model: currentModel,
           temperature: temperature, top_p: top_p, top_k: top_k, presence_penalty: presence_penalty,
           frequency_penalty: frequency_penalty, seed: seed, stream: enableStream,
         };
+
+        // ✧ 智能兼容层：处理 o1/o3 等不支持 max_tokens 和温度参数的新型推理模型
+        if (currentModel.includes("o1") || currentModel.includes("o3")) {
+            payload.max_completion_tokens = maxTokens;
+            // o1/o3 系列不支持这些参数，必须剔除以免触发 400 报错
+            delete payload.temperature;
+            delete payload.top_p;
+            delete payload.presence_penalty;
+            delete payload.frequency_penalty;
+        } else {
+            payload.max_tokens = maxTokens;
+        }
 
         try {
           let currentPayload = { ...payload, messages: finalMessages };
