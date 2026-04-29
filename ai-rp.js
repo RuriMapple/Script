@@ -1097,6 +1097,7 @@ if (!seal.ext.find("AI-role")) {
           const payload = {
               model: currentModel,
               temperature: 0.3,
+              max_tokens: dynConfig.maxTokens,
               messages: messagesContext,
               tools: [
                   {
@@ -1353,6 +1354,7 @@ if (!seal.ext.find("AI-role")) {
                   const payload = {
                       model: currentModel,
                       temperature: dynConfig.temperature,
+                      max_tokens: dynConfig.maxTokens,
                       messages: messagesContext,
                       tools: [
                           {
@@ -1522,8 +1524,8 @@ if (!seal.ext.find("AI-role")) {
     });
   }
 
-  async function performSerperSearch(query) {
-    const apiKey = dynamicConfig.serperApiKey;
+  async function performSerperSearch(query, dynConfig) {
+    const apiKey = dynConfig.serperApiKey;
     if (!apiKey) {
         console.error("✧ 联网搜索 缺少 Serper搜索API密钥 配置");
         return "✧ 未配置搜索API密钥 无法进行搜索";
