@@ -1048,7 +1048,8 @@ if (!seal.ext.find("AI-role")) {
               model: currentModel,
               messages: finalMessages,
               temperature: dynConfig.temperature,
-              max_tokens: dynConfig.maxTokens
+              max_tokens: dynConfig.maxTokens,
+              enable_search: true  // ✧ 新增：强制开启豆包官方联网
           };
           try {
               const response = await safeFetchWithTimeout(apiUrl, {
@@ -2768,6 +2769,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           model: currentModel, max_tokens: maxTokens,
           temperature: temperature, top_p: top_p, top_k: top_k, presence_penalty: presence_penalty,
           frequency_penalty: frequency_penalty, seed: seed, stream: enableStream,
+          enable_search: true  // ✧ 新增：强制开启豆包官方联网
         };
 
         try {
