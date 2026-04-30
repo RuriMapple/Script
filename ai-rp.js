@@ -2957,7 +2957,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
       console.log("========== [最终输出内容] ==========\n" + displayReply);
       
       const forcedBubbles = displayReply.split(/\\f|\f/);
-      const splitLimit = 500; 
+      const splitLimit = 600; 
       const chunks = [];
       
       for (let bubble of forcedBubbles) {
