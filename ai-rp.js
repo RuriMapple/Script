@@ -1446,19 +1446,16 @@ if (session.abortController && session.abortController.signal.aborted) {
 }
 
                       
-                      // ==== 【核心修改：动态分配工具权限】 ====
-                      if (iteration === 1) {
-                          // 第一轮：强制它必须先用搜索工具！
-                          payload.tool_choice = { type: "function", function: { name: "web_search" } };
-                      } else if (iteration === MAX_ITERS) { 
-                          // 最后一轮：没收所有工具，逼它立刻开口总结！
-                          delete payload.tools; 
-                          delete payload.tool_choice; 
-                      } else {
-                          // 中间轮次：恢复自由身，让它自己决定要不要调用 read_link 深入阅读
-                          payload.tool_choice = "auto";
-                      }
-                      // ==========================================
+// ==== 【修复：统一使用兼容性更高的 auto，并在最后收回工具】 ====
+if (iteration === MAX_ITERS) { 
+    // 最后一轮：没收所有工具，逼它立刻开口总结！
+    delete payload.tools; 
+    delete payload.tool_choice; 
+} else {
+    // 恢复自由身，全程使用 auto 确保兼容性，由模型自行决定是否搜索
+    payload.tool_choice = "auto";
+}
+// ==========================================
 
                       try {
                           // ... 请求 API ...
