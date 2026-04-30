@@ -13,7 +13,7 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.register(ext);
   
   // === 核心防卡死熔断器 ===
-  async function safeFetchWithTimeout(url, options, timeoutMs = 180000) {
+  async function safeFetchWithTimeout(url, options, timeoutMs = 99999) {
     let timerId;
     const timeoutPromise = new Promise((_, reject) => 
       timerId = setTimeout(() => reject(new Error("请求超时")), timeoutMs)
@@ -870,7 +870,7 @@ if (!seal.ext.find("AI-role")) {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ sessionId: sessionKey })
-                  }, 180000);
+                  }, 99999);
                   
                   seal.replyToSender(ctx, msg, "✧ 云端知识库已清扫完毕"); 
               } catch (e) {
@@ -926,7 +926,7 @@ if (!seal.ext.find("AI-role")) {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ query: compressedText, userId: userId, sessionId: sessionKey })
-                      }, 180000);
+                      }, 99999);
                       
                       if (kbRes.ok) {
                           const contentType = kbRes.headers.get("content-type");
@@ -1083,7 +1083,7 @@ if (!seal.ext.find("AI-role")) {
                   method: "POST",
                   headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
                   body: JSON.stringify(payload)
-              }, 180000);
+              }, 99999);
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               const data = await response.json();
               const resultText = data.choices[0].message.content || "";
@@ -1165,7 +1165,7 @@ if (!seal.ext.find("AI-role")) {
                       method: "POST",
                       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
                       body: JSON.stringify({...payload, messages: messagesContext}) 
-                  }, 180000);
+                  }, 99999);
                   if (!response.ok) throw new Error(`HTTP ${response.status}`);
                   const data = await response.json();
                   const msgObj = data.choices[0].message;
@@ -1430,7 +1430,7 @@ if (!seal.ext.find("AI-role")) {
                               method: "POST",
                               headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
                               body: JSON.stringify({...payload, messages: messagesContext})
-                          }, 180000);
+                          }, 99999);
                           if (!response.ok) throw new Error(`HTTP ${response.status}`);
                           const data = await response.json();
                           const msgObj = data.choices[0].message;
@@ -1550,7 +1550,7 @@ if (!seal.ext.find("AI-role")) {
           ? `${transApiBaseUrl}&url=${encodeURIComponent(url)}` 
           : `${transApiBaseUrl}?url=${encodeURIComponent(url)}`;
         
-        const response = await safeFetchWithTimeout(targetUrl, {}, 180000); 
+        const response = await safeFetchWithTimeout(targetUrl, {}, 99999); 
         if (!response.ok) return resolve(null);
         const textData = await response.text();
         let b64Data = textData.trim();
@@ -1578,7 +1578,7 @@ if (!seal.ext.find("AI-role")) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({ q: query })
-        }, 180000);
+        }, 99999);
         
         if (!response.ok) return "搜索API请求失败 状态码: " + response.status;
         const data = await response.json();
@@ -1600,7 +1600,7 @@ if (!seal.ext.find("AI-role")) {
                 "Accept": "text/plain",
                 "X-Return-Format": "markdown" 
             }
-        }, 180000);
+        }, 99999);
         
         if (!response.ok) return "✧ 抓取网页失败 状态码: " + response.status;
         const text = await response.text();
@@ -2148,7 +2148,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ sessionId: sessionKey })
-                }, 180000);
+                }, 99999);
                 
                 seal.replyToSender(ctx, msg, "✧ 云端记忆已清扫完毕\n" + dynamicConfig.clearMsg);
             } catch(e) {
@@ -2246,7 +2246,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                   let baseUrl = pConfig.moduleBaseUrl || dynamicConfig.moduleBaseUrl || "http" + "://127.0.0.1:8080/modules/";
                   if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
                   const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
-                  const response = await safeFetchWithTimeout(fileUrl, {}, 180000);
+                  const response = await safeFetchWithTimeout(fileUrl, {}, 99999);
                   if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
                   const content = await response.text();
                   session.personalConfig.moduleData = content;
@@ -2964,7 +2964,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ sessionId: sessionKey })
-                }, 180000);
+                }, 99999);
                 
                 seal.replyToSender(ctx, msg, "✧ 云端清扫成功 \n" + dynamicConfig.clearMsg);
             } catch(e) {
@@ -2979,3 +2979,4 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
   };
   ext.cmdMap.clr = cmdClear;
 }
+
