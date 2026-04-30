@@ -1158,6 +1158,11 @@ if (!seal.ext.find("AI-role")) {
 
           while (iteration < MAX_ITERS) {
               iteration++;
+if (session.abortController && session.abortController.signal.aborted) {
+    if (dynConfig.debugMode) console.log("✧ 联网轮询检测到中止信号 提前终止迭代");
+    break; 
+}
+
               if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
 
               try {
@@ -1423,9 +1428,29 @@ if (!seal.ext.find("AI-role")) {
 
                   while (iteration < MAX_ITERS) {
                       iteration++;
-                      if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
+if (session.abortController && session.abortController.signal.aborted) {
+    if (dynConfig.debugMode) console.log("✧ 联网轮询检测到中止信号 提前终止迭代");
+    break; 
+}
+
+                      
+                      // ==== 【核心修改：动态分配工具权限】 ====
+                      if (iteration === 1) {
+                          // 第一轮：强制它必须先用搜索工具！
+                          payload.tool_choice = { type: "function", function: { name: "web_search" } };
+                      } else if (iteration === MAX_ITERS) { 
+                          // 最后一轮：没收所有工具，逼它立刻开口总结！
+                          delete payload.tools; 
+                          delete payload.tool_choice; 
+                      } else {
+                          // 中间轮次：恢复自由身，让它自己决定要不要调用 read_link 深入阅读
+                          payload.tool_choice = "auto";
+                      }
+                      // ==========================================
 
                       try {
+                          // ... 请求 API ...
+
                           const response = await safeFetchWithTimeout(dynConfig.publicApiUrl, {
                               method: "POST",
                               headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
