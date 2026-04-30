@@ -11,16 +11,28 @@
 if (!seal.ext.find("AI-role")) {
   const ext = seal.ext.new("AI-role", "Sy", "1.9.99"); 
   seal.ext.register(ext);
-  
-  // === 核心防卡死熔断器 ===
-  async function safeFetchWithTimeout(url, options, timeoutMs = 99999) {
+ 
+  // === 核心防卡死熔断器 (修复版：彻底物理阻断幽灵请求) ===
+  async function safeFetchWithTimeout(url, options = {}, timeoutMs = 99999) {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (controller) options.signal = controller.signal;
+
     let timerId;
     const timeoutPromise = new Promise((_, reject) => 
-      timerId = setTimeout(() => reject(new Error("请求超时")), timeoutMs)
+      timerId = setTimeout(() => {
+        if (controller) controller.abort(); 
+        reject(new Error("请求超时"));
+      }, timeoutMs)
     );
+
     return Promise.race([fetch(url, options), timeoutPromise])
+      .catch(err => {
+        if (err.name === 'AbortError') throw new Error("请求超时");
+        throw err;
+      })
       .finally(() => clearTimeout(timerId));
   }
+
 
   // 配置项注册
   seal.ext.registerStringConfig(ext, "API密钥", "sk-xxx");
@@ -2801,27 +2813,22 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           console.log("========== [调试模式: 发送给主干AI的 Final Messages] ==========\n" + JSON.stringify(logMessages, null, 2) + "\n============================================================");
       }
 
-      async function makeRequest(payloadBody) {
+      // 这里的参数多加一个 attemptSignal
+      async function makeRequest(payloadBody, attemptSignal) {
           let contentObj = { text: "" };
           let fetchOptions = {
               method: "POST",
               headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ ...payloadBody, stream: enableStream })
+              body: JSON.stringify({ ...payloadBody, stream: enableStream }),
+              signal: attemptSignal // 核心：严格使用局部阻断信号
           };
-          
-          // 仅在原生支持的情况下才把 signal 塞给底层 fetch
-          if (signal && typeof AbortController !== 'undefined') {
-              fetchOptions.signal = signal;
-          }
 
           if (enableStream) {
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               
-              // 阻塞接收完整流数据
               const text = await response.text();
               
-              // 强行打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
               
               const lines = text.split("\n");
@@ -2845,7 +2852,6 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`✧ API错误: ${errData.error?.message || response.statusText}`); }
               
-              // 非流式打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
               
               const data = await response.json();
@@ -2853,6 +2859,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           }
           return contentObj;
       }
+
 
 
       let replyContent = "";
@@ -2867,22 +2874,46 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           frequency_penalty: frequency_penalty, seed: seed, stream: enableStream,
         };
 
+        // 为当前尝试创建专属阻断器
+        const attemptController = typeof AbortController !== "undefined" ? new AbortController() : null;
+        
+        // 桥接全局的"中止生成"指令 (解决你说的中止生成/删除轮数联动问题)
+        let parentAbortCheck = null;
+        if (signal && attemptController) {
+            if (signal.aborted) { attemptController.abort(); throw new Error("aborted"); }
+            parentAbortCheck = setInterval(() => {
+                if (signal.aborted) attemptController.abort();
+            }, 300);
+        }
+
         try {
           let currentPayload = { ...payload, messages: finalMessages };
-          let res = await makeRequest(currentPayload);
+          
+          let res = await makeRequest(currentPayload, attemptController ? attemptController.signal : null);
+          
           replyContent = res.text;
           finalError = null; 
-          break;
+          if (parentAbortCheck) clearInterval(parentAbortCheck);
+          break; 
         } catch (error) {
+          // 彻底物理阻断旧连接
+          if (attemptController) attemptController.abort(); 
+          if (parentAbortCheck) clearInterval(parentAbortCheck);
+
           finalError = error;
+          if (error.name === 'AbortError' || error.message.includes('aborted')) {
+              throw error; 
+          }
+
           if (debugMode) {
               console.error(`[调试模式] 模型 ${currentModel} 请求异常:`, error);
-              seal.replyToSender(ctx, msg, `[调试日志] ${currentModel} 主干AI请求异常:\n${error.message}`);
           } else if (mIdx < models.length - 1) { 
-              seal.replyToSender(ctx, msg, "✧ 响应失败 尝试使用次选模型 ..."); 
+              seal.replyToSender(ctx, msg, "✧ 响应异常或超时 已强行截断旧连接 尝试切换备用模型..."); 
           }
         }
       }
+
+
 
       if (finalError) throw finalError;
 
