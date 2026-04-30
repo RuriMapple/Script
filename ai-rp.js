@@ -1620,6 +1620,7 @@ if (!seal.ext.find("AI-role")) {
 .replace(/\*\*\*/g, '⊹⊹⊹') 
       .replace(/^(\s*)(#+)/gm, (match, space, hashes) => space + '✦'.repeat(hashes.length)) 
       .replace(/^(\s*)(?:-|\*)\s/gm, '$1⊹ ') 
+      .replace(/\*([^\*]+)\*/g, (match, inner) => Array.from(inner).map(c => c + '\u0332').join(''))
       .replace(/[【】]/g, '◈') 
       .replace(/：/g, ': ')
       .replace(/，/g, ', ')
