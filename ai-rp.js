@@ -1084,7 +1084,11 @@ if (!seal.ext.find("AI-role")) {
               }, 999999);
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               const data = await response.json();
-              return data.choices[0].message.content || "";
+              const resultText = data.choices[0].message.content || "";
+              // 3. 固定打印公开API执行的各种总结/压缩任务
+              console.log(`========== [公开API后台行为 (${currentModel})] ==========\n${resultText}`);
+              return resultText;
+
           } catch (err) {
               finalError = err;
               if (dynConfig.debugMode) console.error(`✧ API异常 模型 ${currentModel} 请求失败:`, err);
@@ -1169,13 +1173,13 @@ if (!seal.ext.find("AI-role")) {
                       for (let tc of msgObj.tool_calls) {
                           if (["web_search", "google_search"].includes(tc.function.name)) {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
+                              console.log(`========== [公开API联网检索] 请求搜索: ${args.query} ==========`);
                               let searchRes = await performSerperSearch(args.query || "", dynConfig);
 
                               messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
                           } else if (tc.function.name === "read_link") {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
+                              console.log(`========== [公开API联网检索] 请求读取网页: ${args.url} ==========`);
                               
                               let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
                               
@@ -1213,6 +1217,8 @@ if (!seal.ext.find("AI-role")) {
                       }
                   } else {
                       finalOutput = msgObj.content || "";
+                      // 4. 打印联网模型思考完毕后的最终输出
+                      console.log(`========== [公开API联网思考] 最终输出 ==========\n${finalOutput}`);
                       success = true;
                       break;
                   }
@@ -2842,9 +2848,12 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
 
       if (finalError) throw finalError;
 
-      if (debugMode) console.log("[主干AI原始回复]:\n" + replyContent);
+      // 1. 固定打印主干AI的原始回复（保留所有代码块和思维过程）
+      console.log("========== [主干AI原始回复] ==========\n" + replyContent);
+      
       const { filteredContent, codeBlocks } = filterContent(replyContent); 
       let safeContent = filteredContent;
+
 
       let displayReply = "";
       let cursor = 0;
@@ -2875,6 +2884,9 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         });
       }
 
+      // 2. 固定打印最终处理完毕、准备发给QQ的纯净回复
+      console.log("========== [最终输出内容] ==========\n" + displayReply);
+      
       const forcedBubbles = displayReply.split(/\\f|\f/);
       const splitLimit = 600; 
       const chunks = [];
