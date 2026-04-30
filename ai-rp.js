@@ -2660,10 +2660,16 @@ session.styleContext = null;
 
               // 3. 正式向主干 AI 发送完整打包好的上下文
               const payload = session.buildPayload();
-              const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
-              
-              // 4. AI 顺利回复 把 AI 的话也【登记备案】
-              session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
+
+// 新增拦截：如果 AI 给了空包，抛弃这次记录并提示
+if (!result.originalReply || result.originalReply.trim() === "") {
+    seal.replyToSender(ctx, msg, "✧ API返回了空包，可能是模型审查或网络截断。请尝试重新生成。");
+    return; // 终止后续的上下文登记和更新操作
+}
+
+session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+
 
               updateSession(sessionKey, session); 
               await Promise.all([
