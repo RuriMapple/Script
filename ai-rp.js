@@ -1401,7 +1401,7 @@ if (!seal.ext.find("AI-role")) {
                               type: "function",
                               function: {
                                   name: "web_search",
-                                  description: "使用搜索引擎查询书籍、文学作品、作者、标志段落等相关信息。当需要为当前对话寻找最匹配的参考书籍时使用此工具。",
+                                  description: "使用搜索引擎查询书籍、文学作品、作者、原文段落等相关信息。当需要为当前对话寻找匹配的参考书籍时使用此工具。",
                                   parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
                               }
                           },
@@ -1409,7 +1409,7 @@ if (!seal.ext.find("AI-role")) {
                               type: "function",
                               function: {
                                   name: "read_link",
-                                  description: "读取指定网页链接的详细文本内容。当搜索结果不足以提供完整信息，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
+                                  description: "读取指定网页链接的详细文本内容。当搜索结果并未提供原文，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
                                   parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
                               }
                           }
@@ -2979,4 +2979,3 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
   };
   ext.cmdMap.clr = cmdClear;
 }
-
