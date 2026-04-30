@@ -1336,26 +1336,30 @@ if (!seal.ext.find("AI-role")) {
 
           const newArcRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: arcPrompt}], dynConfig);
           
-          if (newArcRes) {
-              const match = newArcRes.match(/<story_arc>[\s\S]*?<\/story_arc>/);
-              if (match) {
-                  if (!session.personalConfig) session.personalConfig = {};
-                  session.personalConfig.storyArcAnchor = match[0];
-                  
-                  for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
-                      if (session.dynamicContent[i].role === "assistant") {
-                          session.dynamicContent[i].storyArcSnapshot = match[0];
-                          break;
-                      }
+          if (newArcRes && newArcRes.trim() !== "") {
+              // 1. 暴力扒掉 AI 可能自己生成的标签，防止出现 <story_arc><story_arc> 的套娃现象
+              let cleanRes = newArcRes.replace(/<\/?story_arc>/g, "").trim();
+              
+              // 2. 无论 AI 听不听话，我们在代码层面强制给它穿上标签外套！
+              let finalArcContent = `<story_arc>\n${cleanRes}\n</story_arc>`;
+
+              if (!session.personalConfig) session.personalConfig = {};
+              session.personalConfig.storyArcAnchor = finalArcContent;
+              
+              for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+                  if (session.dynamicContent[i].role === "assistant") {
+                      session.dynamicContent[i].storyArcSnapshot = finalArcContent;
+                      break;
                   }
-                  console.log(`========== [主线总结最终插入内容] ==========\n${match[0]}`);
               }
+              console.log(`========== [主线总结最终插入内容] ==========\n${finalArcContent}`);
           }
 
       } catch (e) {
           console.error("✧ 主线提取异常", e);
       }
   }
+
 
   async function updateStyleSummary(session, dynConfig, latestUserText = "") {
       const pConfig = session.personalConfig || {};
