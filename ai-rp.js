@@ -552,7 +552,7 @@ if (!seal.ext.find("AI-role")) {
       let allSessions = JSON.parse(this.ext.storageGet(this.storageKey) || "{}");
       if (allSessions[userId]?.[sessionName]) {
         delete allSessions[userId][sessionName];
-        this.ext.storageSehis.storageKey, JSON.stringify(allSessions));
+        this.ext.storageSet(this.storageKey, JSON.stringify(allSessions));
         return true;
       }
       return false;
