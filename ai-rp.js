@@ -65,7 +65,6 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.registerBoolConfig(ext, "开启识别图片", false); 
   seal.ext.registerBoolConfig(ext, "开启调试模式", false); 
   seal.ext.registerBoolConfig(ext, "开启联网请求", false); 
-  seal.ext.registerBoolConfig(ext, "向知识库推送模组", false); 
   
   // === 联网抓取参数 ===
   seal.ext.registerStringConfig(ext, "Serper搜索API密钥", ""); 
@@ -142,7 +141,6 @@ if (!seal.ext.find("AI-role")) {
       this.enableImage = seal.ext.getBoolConfig(this.ext, "开启识别图片"); 
       this.debugMode = seal.ext.getBoolConfig(this.ext, "开启调试模式"); 
       this.enableNetwork = seal.ext.getBoolConfig(this.ext, "开启联网请求"); 
-      this.pushModuleToKB = seal.ext.getBoolConfig(this.ext, "向知识库推送模组");
       this.serperApiKey = seal.ext.getStringConfig(this.ext, "Serper搜索API密钥"); 
       this.networkPrefix = seal.ext.getStringConfig(this.ext, "联网请求前缀");
       
@@ -257,7 +255,7 @@ if (!seal.ext.find("AI-role")) {
         temperature: null, top_p: null, top_k: null,
         presence_penalty: null, frequency_penalty: null, seed: null,
         depth: null, filterIdEnabled: null, enableImage: null, debugMode: null, 
-        enableNetwork: null, pushModuleToKB: null, maxNetworkIterations: null, webpageMaxLength: null,
+        enableNetwork: null,  maxNetworkIterations: null, webpageMaxLength: null,
         enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,
         enableKBSync: null, kbSyncApi: null,
         enableKBQuery: null, kbQueryApi: null,
@@ -1031,13 +1029,9 @@ if (!seal.ext.find("AI-role")) {
 
       if (!enableSync || !syncApiUrl) return;
 
-      const pushModule = (pConfig.pushModuleToKB !== null && pConfig.pushModuleToKB !== undefined) ? pConfig.pushModuleToKB : dynConfig.pushModuleToKB;
-
       try {
-          let moduleContent = null;
-          if (pushModule && session.lockedContents.module) {
-              moduleContent = session.lockedContents.module.content;
-          }
+          // [修改点]：彻底解耦，常规的云端同步不再自动附带模组内容
+          let moduleContent = null; 
 
           let pureHistory = session.dynamicContent.map(msg => {
               let { pureText } = filterContent(msg.content);
@@ -1894,7 +1888,6 @@ API密钥: ${formatMasked(p.apiKey)}
 识别图片: ${formatBool(p.enableImage)}
 调试模式: ${formatBool(p.debugMode)}
 联网请求: ${formatBool(p.enableNetwork)}
-向知识库推送模组: ${formatBool(p.pushModuleToKB)}
 知识库同步: ${formatBool(p.enableKBSync)}
 知识库同步API: ${formatMasked(p.kbSyncApi)}
 知识库检索: ${formatBool(p.enableKBQuery)}
@@ -1965,7 +1958,6 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         { on: "开启识别图片", off: "关闭识别图片", key: "enableImage", label: "图片识别" },
         { on: "开启图片识别", off: "关闭图片识别", key: "enableImage", label: "图片识别" },
         { on: "开启联网请求", off: "关闭联网请求", key: "enableNetwork", label: "联网请求" },
-        { on: "开启向知识库推送模组", off: "关闭向知识库推送模组", key: "pushModuleToKB", label: "向知识库推送模组" },
         { on: "开启知识库同步", off: "关闭知识库同步", key: "enableKBSync", label: "知识库同步" },
         { on: "开启知识库检索", off: "关闭知识库检索", key: "enableKBQuery", label: "知识库检索" },
         { on: "开启文风总结", off: "关闭文风总结", key: "enableStyleSummary", label: "文风总结" },
@@ -2052,7 +2044,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         if (!target || target === "api" || target === "配置" || target === "全部" || target === "所有") {
             session.personalConfig = { 
   apiUrl: null, apiKey: null, modelName: null, 
-  pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null, pushModuleToKB: null,
+  pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null, 
   maxNetworkIterations: null, webpageMaxLength: null, enableKBSync: null, kbSyncApi: null,
   enableKBQuery: null, kbQueryApi: null,enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,
   temperature: null, top_p: null, top_k: null,
@@ -2074,7 +2066,6 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
             "引用回复": "useReply", "流式请求": "enableStream", "识别图片": "enableImage", "图片识别": "enableImage",
             "开启识别图片": "enableImage", "开启图片识别": "enableImage", "调试模式": "debugMode", "开启调试模式": "debugMode",
             "联网请求": "enableNetwork", "开启联网请求": "enableNetwork", 
-            "向知识库推送模组": "pushModuleToKB", "开启向知识库推送模组": "pushModuleToKB",
             "网页抓取最大字符数": "webpageMaxLength", "联网最大迭代次数": "maxNetworkIterations",
             "知识库同步": "enableKBSync", "开启知识库同步": "enableKBSync", "知识库同步api": "kbSyncApi",
             "知识库检索": "enableKBQuery", "开启知识库检索": "enableKBQuery", "知识库检索api": "kbQueryApi",
@@ -2295,6 +2286,71 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           }
       }
 
+      // === 新增精细操作：推送外部模组到云端 ===
+      const pushModuleMatch = text.match(/^推送模组\s*(.*)$/);
+      if (pushModuleMatch) {
+          let moduleName = pushModuleMatch[1].trim();
+          let session = getSession(sessionKey);
+          if (!moduleName) {
+              seal.replyToSender(ctx, msg, "✧ 请指定要推送的外部模组名称");
+              return;
+          }
+
+          const pConfig = session.personalConfig || {};
+          const syncApiUrl = pConfig.kbSyncApi || dynamicConfig.kbSyncApi;
+          if (!syncApiUrl) {
+              seal.replyToSender(ctx, msg, "✧ 当前环境未配置知识库同步API，无法向云端推送");
+              return;
+          }
+
+          seal.replyToSender(ctx, msg, `✧ 正在获取并推送外部模组「${moduleName}」到云端 ...`);
+          
+          try {
+              let baseUrl = pConfig.moduleBaseUrl || dynamicConfig.moduleBaseUrl || "http" + "://127.0.0.1:8080/modules/";
+              if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
+              const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
+              
+              const response = await safeFetchWithTimeout(fileUrl, {}, 999999);
+              if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
+              const content = await response.text();
+              
+              // 【判定对齐】: 使用与云端会话完全一致的 <module_data> 标签包裹
+              const newContent = `<module_data>\n${content}\n</module_data>`;
+              
+              // 提取最新的当前会话记录
+              let pureHistory = session.dynamicContent.map(m => {
+                  let { pureText } = filterContent(m.content);
+                  if (typeof pureText === 'string') {
+                      pureText = pureText.replace(/^\(QQ:\d+\)\s*/i, "");
+                      pureText = pureText.replace(/^\(.*?\)\s*/, ""); 
+                  }
+                  return { role: m.role, content: pureText };
+              });
+
+              const syncPayload = {
+                  sessionId: sessionKey, 
+                  timestamp: Date.now(),
+                  moduleData: newContent,
+                  history: pureHistory
+              };
+
+              // 进行云端投递
+              const syncRes = await fetch(syncApiUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(syncPayload)
+              });
+
+              if (!syncRes.ok) throw new Error(`✧ 云端API响应异常 ${syncRes.status}`);
+
+              seal.replyToSender(ctx, msg, `✧ 模组「${moduleName}」已成功推送到云端`);
+          } catch (error) {
+              console.error("抓取或推送外部模组失败:", error);
+              seal.replyToSender(ctx, msg, `✧ 推送模组「${moduleName}」失败\n(请确认该 txt 文件部署路径正确且云端API畅通)\n错误详情: ${error.message}`);
+          }
+          return;
+      }
+
       if (/^(中止生成|停止生成)$/i.test(text)) {
           let session = getSession(sessionKey);
           if (session.isGenerating && session.abortController) {
@@ -2429,6 +2485,9 @@ await Promise.all([
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
 
               session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+              
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+              
               updateSession(sessionKey, session);
               await Promise.all([
                   updateStatusBar(session, result.originalReply, dynamicConfig),
@@ -2704,6 +2763,8 @@ if (!result.originalReply || result.originalReply.trim() === "") {
 
 session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
 
+syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+
 
               updateSession(sessionKey, session); 
               await Promise.all([
@@ -2747,6 +2808,8 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         const payload = session.buildPayload();
         const result = await sendOpenAIRequest(payload, ctx, msg, session, subController.signal);
         session.addDynamicMessage('assistant', result.originalReply, result.filteredReply);
+        
+        syncToKnowledgeBase(session, dynamicConfig, sessionKey);
         
         updateSession(sessionKey, session);
         await Promise.all([
