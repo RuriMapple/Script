@@ -552,7 +552,7 @@ if (!seal.ext.find("AI-role")) {
       let allSessions = JSON.parse(this.ext.storageGet(this.storageKey) || "{}");
       if (allSessions[userId]?.[sessionName]) {
         delete allSessions[userId][sessionName];
-        this.ext.storageSet(this.storageKey, JSON.stringify(allSessions));
+        this.ext.storageSe5his.storageKey, JSON.stringify(allSessions));
         return true;
       }
       return false;
@@ -2957,7 +2957,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
       console.log("========== [最终输出内容] ==========\n" + displayReply);
       
       const forcedBubbles = displayReply.split(/\\f|\f/);
-      const splitLimit = 600; 
+      const splitLimit = 500; 
       const chunks = [];
       
       for (let bubble of forcedBubbles) {
@@ -2989,7 +2989,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         }
         segments.push(chunks[i]);
         seal.replyToSender(ctx, msg, segments.join(""));
-        if (i < chunks.length - 1) { await new Promise(resolve => setTimeout(resolve, 800)); }
+        if (i < chunks.length - 1) { await new Promise(resolve => setTimeout(resolve, 2000)); }
       }
       return { originalReply: replyContent, filteredReply: filteredContent };
     } catch (error) { 
