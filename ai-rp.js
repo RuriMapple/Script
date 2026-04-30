@@ -933,6 +933,7 @@ if (!seal.ext.find("AI-role")) {
                           let ragText = contentType && contentType.includes("application/json") ? ((await kbRes.json()).text || "") : (await kbRes.text());
                           if (ragText && ragText.trim() !== "") {
                               session.ragContext = `<module_data>\n${ragText}\n</module_data>`;
+                              console.log(`========== [知识库(RAG)最终插入内容] ==========\n${session.ragContext}`);
                           }
                       }
                   }
@@ -1002,9 +1003,10 @@ if (!seal.ext.find("AI-role")) {
                   });
                   
                   session.webSearchContext = contentArray;
-                  if (dynConfig.debugMode) console.log(`✧ 图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片（经 Worker 转码）`);
+                  console.log(`========== [WebSearch最终插入内容 (多模态)] ==========\n<web_search>\n${pageContents}\n</web_search>\n[外加 ${successCount} 张转码图片]`);
               } else {
                   session.webSearchContext = `<web_search>\n${pageContents}\n</web_search>`;
+                  console.log(`========== [WebSearch最终插入内容 (纯文本)] ==========\n${session.webSearchContext}`);
               }
           }
       }
@@ -1297,7 +1299,7 @@ if (!seal.ext.find("AI-role")) {
                           break;
                       }
                   }
-                  if (dynConfig.debugMode) console.log("✧ 状态栏更新 成功更新个人配置项：锚定项0");
+                  console.log(`========== [状态栏(锚定项0)最终插入内容] ==========\n${codeBlockMatch[0]}`);
               }
           }
       } catch (e) {
@@ -1346,9 +1348,10 @@ if (!seal.ext.find("AI-role")) {
                           break;
                       }
                   }
-                  if (dynConfig.debugMode) console.log("✧ 主线总结更新 成功更新快照");
+                  console.log(`========== [主线总结最终插入内容] ==========\n${match[0]}`);
               }
           }
+
       } catch (e) {
           console.error("✧ 主线提取异常", e);
       }
@@ -1496,7 +1499,7 @@ if (!seal.ext.find("AI-role")) {
 
           if (result && result.trim() !== '') {
               session.styleContext = `<book_refs>\n${result.trim()}\n</book_refs>`;
-              if (dynConfig.debugMode) console.log("✧ 文风总结 已更新:\n" + session.styleContext);
+              console.log(`========== [文风总结最终插入内容] ==========\n${session.styleContext}`);
           }
       } catch (e) {
           console.error("✧ 文风总结异常", e);
