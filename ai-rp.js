@@ -901,12 +901,25 @@ if (!seal.ext.find("AI-role")) {
                       }).join('\n') + "\n\n";
                   }
 
-                  // 2. 组装最终 Prompt (processedText 自身已包含单条或合并后的 tail)
-                  const compressPrompt = dynConfig.semanticPrefix + "\n" + historyContext + "[最新输入]\n" + processedText;
+                  // ================= 新增：提取角色卡并注入到压缩语义中 =================
+                  let roleCardsContent = "";
+                  if (session.lockedContents && session.lockedContents.roleCards) {
+                      for (const cardId in session.lockedContents.roleCards) {
+                          const cardData = session.lockedContents.roleCards[cardId];
+                          if (cardData && cardData.content) {
+                              roleCardsContent += `\`\`\`角色卡${cardId}\n${cardData.content}\n\`\`\`\n`;
+                          }
+                      }
+                  }
+                  let roleContext = roleCardsContent.trim() !== "" ? "[当前角色设定]\n" + roleCardsContent + "\n" : "";
+                  // ==================================================================
+
+                  // 2. 组装最终 Prompt (加入 roleContext 角色设定前置)
+                  const compressPrompt = dynConfig.semanticPrefix + "\n" + roleContext + historyContext + "[最新输入]\n" + processedText;
                   
                   const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
 
-                  
+                 
                   if (compressedText) {
                       if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", compressedText);
                       const kbRes = await safeFetchWithTimeout(kbQueryApi, {
