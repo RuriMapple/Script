@@ -1749,8 +1749,26 @@ if (iteration === MAX_ITERS) {
         }
         
         content = content.replace(/\\f|\f/g, "").replace(/\\n/g, "\n").trim();
+
+        // ========== 新增：带图片/链接保护的 renderText 渲染层 ==========
+        let renderedContent = "";
+        let cursor = 0;
+        // 保护图片、CQ码、URL等，防止其中的英文字母被 renderText 转码破坏链接
+        const protectRegex = /!\[.*?\]\([^\)]+\)|\[CQ:[^\]]+\]|\[IMG:[^\]]+\]|https?:\/\/[^\s\u4e00-\u9fa5]+|data:image\/[^;]+;base64,[^)\s\]]+/g;
+        let matchResult;
+        
+        while ((matchResult = protectRegex.exec(content)) !== null) {
+            renderedContent += renderText(content.slice(cursor, matchResult.index));
+            renderedContent += matchResult[0];
+            cursor = protectRegex.lastIndex;
+        }
+        renderedContent += renderText(content.slice(cursor));
+        content = renderedContent;
+        // ===============================================================
+
         return `${roleLabel}: ${content}`;
     });
+
     try {
       const backendUrl = "https://pastedl.syocars.workers.dev"; 
       const fileNameSafe = sessionName || "当前对话记录";
@@ -2114,7 +2132,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
       try {
-        const backendUrl = "https://pastedl.workers.dev"; 
+        const backendUrl = "https://pastedl.syocars.workers.dev"; 
         
         const response = await fetch(`${backendUrl}/upload`, {
           method: "POST",
