@@ -1033,14 +1033,17 @@ if (!seal.ext.find("AI-role")) {
           // [修改点]：彻底解耦，常规的云端同步不再自动附带模组内容
           let moduleContent = null; 
 
-          let pureHistory = session.dynamicContent.map(msg => {
-              let { pureText } = filterContent(msg.content);
-              if (typeof pureText === 'string') {
-                  pureText = pureText.replace(/^\(QQ:\d+\)\s*/i, "");
-                  pureText = pureText.replace(/^\(.*?\)\s*/, ""); 
-              }
-              return { role: msg.role, content: pureText };
-          });
+let pureHistory = session.dynamicContent.map(m => {
+    // 👇 同样改为提取 filteredContent
+    let { filteredContent } = filterContent(m.content);
+    let syncText = filteredContent;
+    if (typeof syncText === 'string') {
+        syncText = syncText.replace(/^\(QQ:\d+\)\s*/i, "");
+        syncText = syncText.replace(/^\(.*?\)\s*/, ""); 
+    }
+    return { role: m.role, content: syncText };
+});
+
 
           const syncPayload = {
               sessionId: sessionKey, 
@@ -2318,14 +2321,16 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
               const newContent = `<module_data>\n${content}\n</module_data>`;
               
               // 提取最新的当前会话记录
-              let pureHistory = session.dynamicContent.map(m => {
-                  let { pureText } = filterContent(m.content);
-                  if (typeof pureText === 'string') {
-                      pureText = pureText.replace(/^\(QQ:\d+\)\s*/i, "");
-                      pureText = pureText.replace(/^\(.*?\)\s*/, ""); 
-                  }
-                  return { role: m.role, content: pureText };
-              });
+              let pureHistory = session.dynamicContent.map(msg => {
+    // 👇 改为提取 filteredContent，彻底剔除 ``` 代码块
+    let { filteredContent } = filterContent(msg.content); 
+    let syncText = filteredContent;
+    if (typeof syncText === 'string') {
+        syncText = syncText.replace(/^\(QQ:\d+\)\s*/i, "");
+        syncText = syncText.replace(/^\(.*?\)\s*/, ""); 
+    }
+    return { role: msg.role, content: syncText };
+});
 
               const syncPayload = {
                   sessionId: sessionKey, 
