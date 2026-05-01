@@ -13,7 +13,7 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.register(ext);
  
   // === 核心防卡死熔断器 (修复版：彻底物理阻断幽灵请求) ===
-  async function safeFetchWithTimeout(url, options = {}, timeoutMs = 999999) {
+  async function safeFetchWithTimeout(url, options = {}, timeoutMs = 100000) {
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     if (controller) options.signal = controller.signal;
 
@@ -880,7 +880,7 @@ if (!seal.ext.find("AI-role")) {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ sessionId: sessionKey })
-                  }, 999999);
+                  }, 100000);
                   
                   seal.replyToSender(ctx, msg, "✧ 云端知识库已清扫完毕"); 
               } catch (e) {
@@ -936,7 +936,7 @@ if (!seal.ext.find("AI-role")) {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ query: compressedText, userId: userId, sessionId: sessionKey })
-                      }, 999999);
+                      }, 100000);
                       
                       if (kbRes.ok) {
                           const contentType = kbRes.headers.get("content-type");
@@ -1092,7 +1092,7 @@ let pureHistory = session.dynamicContent.map(m => {
                   method: "POST",
                   headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
                   body: JSON.stringify(payload)
-              }, 999999);
+              }, 100000);
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               const data = await response.json();
               const resultText = data.choices[0].message.content || "";
@@ -1179,7 +1179,7 @@ if (session.abortController && session.abortController.signal.aborted) {
                       method: "POST",
                       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
                       body: JSON.stringify({...payload, messages: messagesContext}) 
-                  }, 999999);
+                  }, 100000);
                   if (!response.ok) throw new Error(`HTTP ${response.status}`);
                   const data = await response.json();
                   const msgObj = data.choices[0].message;
@@ -1302,24 +1302,33 @@ if (session.abortController && session.abortController.signal.aborted) {
           const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: statusBarPrompt}], dynConfig);
           
           if (newStatusBarRes) {
-              const codeBlockMatch = newStatusBarRes.match(/```[\s\S]*?```/);
-              if (codeBlockMatch) {
+              // 【修复点：过滤掉 TM 脚本头和无关代码块】
+              const allBlocks = newStatusBarRes.match(/```[\s\S]*?```/g);
+              let validCodeBlock = null;
+
+              if (allBlocks) {
+                  // 寻找第一个不包含 UserScript 关键字的代码块
+                  validCodeBlock = allBlocks.find(block => !block.includes("==UserScript=="));
+              }
+
+              if (validCodeBlock) {
                   if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
-                  session.personalConfig.fixedAnchors[0] = codeBlockMatch[0];
+                  session.personalConfig.fixedAnchors[0] = validCodeBlock;
                   
                   for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
                       if (session.dynamicContent[i].role === "assistant") {
-                          session.dynamicContent[i].anchorSnapshot = codeBlockMatch[0];
+                          session.dynamicContent[i].anchorSnapshot = validCodeBlock;
                           break;
                       }
                   }
-                  console.log(`========== [状态栏(锚定项0)最终插入内容] ==========\n${codeBlockMatch[0]}`);
+                  console.log(`========== [状态栏(锚定项0)最终插入内容] ==========\n${validCodeBlock}`);
               }
           }
       } catch (e) {
           console.error("✧ 状态栏提取异常", e);
       }
   }
+
 
   // === 【新增】并发主线总结功能 ===
   async function updateStoryArc(session, aiReply, dynConfig) {
@@ -1461,7 +1470,7 @@ if (iteration === MAX_ITERS) {
                               method: "POST",
                               headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
                               body: JSON.stringify({...payload, messages: messagesContext})
-                          }, 999999);
+                          }, 100000);
                           if (!response.ok) throw new Error(`HTTP ${response.status}`);
                           const data = await response.json();
                           const msgObj = data.choices[0].message;
@@ -1581,7 +1590,7 @@ if (iteration === MAX_ITERS) {
           ? `${transApiBaseUrl}&url=${encodeURIComponent(url)}` 
           : `${transApiBaseUrl}?url=${encodeURIComponent(url)}`;
         
-        const response = await safeFetchWithTimeout(targetUrl, {}, 999999); 
+        const response = await safeFetchWithTimeout(targetUrl, {}, 100000); 
         if (!response.ok) return resolve(null);
         const textData = await response.text();
         let b64Data = textData.trim();
@@ -1609,7 +1618,7 @@ if (iteration === MAX_ITERS) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({ q: query })
-        }, 999999);
+        }, 100000);
         
         if (!response.ok) return "搜索API请求失败 状态码: " + response.status;
         const data = await response.json();
@@ -1631,7 +1640,7 @@ if (iteration === MAX_ITERS) {
                 "Accept": "text/plain",
                 "X-Return-Format": "markdown" 
             }
-        }, 999999);
+        }, 100000);
         
         if (!response.ok) return "✧ 抓取网页失败 状态码: " + response.status;
         const text = await response.text();
@@ -2194,7 +2203,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ sessionId: sessionKey })
-                }, 999999);
+                }, 100000);
                 
                 seal.replyToSender(ctx, msg, "✧ 云端记忆已清扫完毕\n" + dynamicConfig.clearMsg);
             } catch(e) {
@@ -2292,7 +2301,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                   let baseUrl = pConfig.moduleBaseUrl || dynamicConfig.moduleBaseUrl || "http" + "://127.0.0.1:8080/modules/";
                   if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
                   const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
-                  const response = await safeFetchWithTimeout(fileUrl, {}, 999999);
+                  const response = await safeFetchWithTimeout(fileUrl, {}, 100000);
                   if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
                   const content = await response.text();
                   session.personalConfig.moduleData = content;
@@ -2331,7 +2340,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
               if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
               const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
               
-              const response = await safeFetchWithTimeout(fileUrl, {}, 999999);
+              const response = await safeFetchWithTimeout(fileUrl, {}, 100000);
               if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
               const content = await response.text();
               
@@ -2487,6 +2496,18 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           try {
               await syncModule(session, dynamicConfig);
               
+              // 【修复：添加这一段防串台机制】
+              // 1. 每次重新生成前，手动将本地残留的上下文清空
+              session.ragContext = null;
+              session.webSearchContext = null;
+              session.styleContext = null;
+              
+              // 2. 提前把本地删除脏数据的动作同步到云端，防止等下的 RAG 检索拉取到刚删除的“幽灵记忆”
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+              
+              // 3. 延迟 300ms 等待云端知识库落盘处理
+              await new Promise(resolve => setTimeout(resolve, 300));
+
               // 补全缺失的上下文任务 (使其调用公开API进行RAG/联网检索)
               const currentUserMsg = session.dynamicContent[session.dynamicContent.length - 1];
               if (currentUserMsg && currentUserMsg.role === 'user') {
@@ -2496,13 +2517,11 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                   }
 
                   // 重新生成分支 —— 不传第三参数
-await Promise.all([
-    executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
-    updateStyleSummary(session, dynamicConfig)
-]);
+                  await Promise.all([
+                      executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
+                      updateStyleSummary(session, dynamicConfig)
+                  ]);
               }
-
-              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
 
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
@@ -2532,6 +2551,7 @@ await Promise.all([
           }
           return;
       }
+
 
       const deleteMatch = text.match(/^删除轮数\s*(\d+)$/i);
       if (deleteMatch) {
@@ -3109,7 +3129,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ sessionId: sessionKey })
-                }, 999999);
+                }, 100000);
                 
                 seal.replyToSender(ctx, msg, "✧ 云端清扫成功 \n" + dynamicConfig.clearMsg);
             } catch(e) {
