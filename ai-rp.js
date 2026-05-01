@@ -2191,7 +2191,9 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         newSession.personalConfig = { ...oldSession.personalConfig }; 
         newSession.personalConfig.fixedAnchors = {};
         newSession.personalConfig.storyArcAnchor = null;
+        newSession.personalConfig.moduleData = null; // 💡 显式将模组配置剥离，实现同步清除
         updateSession(sessionKey, newSession); 
+
 
         const syncApiUrl = newSession.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
         if (syncApiUrl) {
@@ -3116,6 +3118,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
     newSession.personalConfig = { ...oldSession.personalConfig }; 
     newSession.personalConfig.fixedAnchors = {};
     newSession.personalConfig.storyArcAnchor = null;
+    newSession.personalConfig.moduleData = null; // 💡 显式将模组配置剥离，实现同步清除
     updateSession(sessionKey, newSession); 
 
     const syncApiUrl = newSession.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
