@@ -1259,11 +1259,19 @@ if (session.abortController && session.abortController.signal.aborted) {
       return extractedUrls;
   }
 
-
   async function updateStatusBar(session, aiReply, dynConfig) {
       const enableKBQuery = (session.personalConfig.enableKBQuery !== null && session.personalConfig.enableKBQuery !== undefined) ? session.personalConfig.enableKBQuery : dynConfig.enableKBQuery;
       if (!enableKBQuery) return;
       try {
+          // === 【核心机制：提前锁定目标消息】 ===
+          let targetMsg = null;
+          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+              if (session.dynamicContent[i].role === "assistant") {
+                  targetMsg = session.dynamicContent[i];
+                  break;
+              }
+          }
+
           let currentAnchor0 = (session.personalConfig.fixedAnchors && session.personalConfig.fixedAnchors[0] !== undefined) 
                                 ? session.personalConfig.fixedAnchors[0] 
                                 : (dynConfig.fixedAnchors[0] || "");
@@ -1299,35 +1307,55 @@ if (session.abortController && session.abortController.signal.aborted) {
               role: m.role,
               content: typeof m.content === 'string' ? m.content : ""
           }));
+          
+          // === 发起耗时的异步 API 请求 ===
           const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: statusBarPrompt}], dynConfig);
           
           if (newStatusBarRes) {
-              // 【修复点：过滤掉 TM 脚本头和无关代码块】
               const allBlocks = newStatusBarRes.match(/```[\s\S]*?```/g);
               let validCodeBlock = null;
 
               if (allBlocks) {
-                  // 寻找第一个不包含 UserScript 关键字的代码块
                   validCodeBlock = allBlocks.find(block => !block.includes("==UserScript=="));
               }
 
               if (validCodeBlock) {
-                  if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
-                  session.personalConfig.fixedAnchors[0] = validCodeBlock;
+                  // === 【终极防御：存活与新鲜度双重校验】 ===
+                  const msgIndex = session.dynamicContent.indexOf(targetMsg);
                   
-                  for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+                  // 1. 存活校验：如果被删除了，直接丢弃
+                  if (msgIndex === -1) {
+                      if (dynConfig.debugMode) console.log("✧ 状态栏：目标轮次已被删除，已阻断更新");
+                      return;
+                  }
+
+                  // 2. 新鲜度校验：检查它之后是否产生了新的 AI 回复
+                  let isLatestAI = true;
+                  for (let i = session.dynamicContent.length - 1; i > msgIndex; i--) {
                       if (session.dynamicContent[i].role === "assistant") {
-                          session.dynamicContent[i].anchorSnapshot = validCodeBlock;
+                          isLatestAI = false;
                           break;
                       }
                   }
-                  console.log(`========== [状态栏(锚定项0)最终插入内容] ==========\n${validCodeBlock}`);
+
+                  // 3. 无论如何，只要活着，就给这条历史消息挂上快照（用于回滚）
+                  targetMsg.anchorSnapshot = validCodeBlock;
+                  
+                  // 4. 只有当它是当前最新的 AI 消息时，才允许修改全局环境
+                  if (isLatestAI) {
+                      if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
+                      session.personalConfig.fixedAnchors[0] = validCodeBlock;
+                      console.log(`========== [状态栏(锚定项0)最终插入内容] ==========\n${validCodeBlock}`);
+                  } else {
+                      if (dynConfig.debugMode) console.log("✧ 状态栏：检测到迟到的旧总结，仅写入历史快照，不污染全局状态");
+                  }
               }
           }
       } catch (e) {
           console.error("✧ 状态栏提取异常", e);
       }
   }
+
 
 
   // === 【新增】并发主线总结功能 ===
@@ -1340,6 +1368,15 @@ if (session.abortController && session.abortController.signal.aborted) {
       if (!enableStoryArc) return;
 
       try {
+          // === 【核心机制：提前锁定目标消息】 ===
+          let targetMsg = null;
+          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+              if (session.dynamicContent[i].role === "assistant") {
+                  targetMsg = session.dynamicContent[i];
+                  break;
+              }
+          }
+
           let currentArc = pConfig.storyArcAnchor || "";
           let latestUserInput = "";
           const dynamic = session.dynamicContent;
@@ -1357,31 +1394,49 @@ if (session.abortController && session.abortController.signal.aborted) {
               content: typeof m.content === 'string' ? m.content : ""
           }));
 
+          // === 发起耗时的异步 API 请求 ===
           const newArcRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: arcPrompt}], dynConfig);
           
           if (newArcRes && newArcRes.trim() !== "") {
-              // 1. 暴力扒掉 AI 可能自己生成的标签，防止出现 <story_arc><story_arc> 的套娃现象
-              let cleanRes = newArcRes.replace(/<\/?story_arc>/g, "").trim();
+              // === 【终极防御：存活与新鲜度双重校验】 ===
+              const msgIndex = session.dynamicContent.indexOf(targetMsg);
               
-              // 2. 无论 AI 听不听话，我们在代码层面强制给它穿上标签外套！
-              let finalArcContent = `<story_arc>\n${cleanRes}\n</story_arc>`;
+              // 1. 存活校验：如果被删除了，直接丢弃
+              if (msgIndex === -1) {
+                  if (dynConfig.debugMode) console.log("✧ 主线总结：目标轮次已被删除，已阻断更新");
+                  return;
+              }
 
-              if (!session.personalConfig) session.personalConfig = {};
-              session.personalConfig.storyArcAnchor = finalArcContent;
-              
-              for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+              // 2. 新鲜度校验：检查它之后是否产生了新的 AI 回复
+              let isLatestAI = true;
+              for (let i = session.dynamicContent.length - 1; i > msgIndex; i--) {
                   if (session.dynamicContent[i].role === "assistant") {
-                      session.dynamicContent[i].storyArcSnapshot = finalArcContent;
+                      isLatestAI = false;
                       break;
                   }
               }
-              console.log(`========== [主线总结最终插入内容] ==========\n${finalArcContent}`);
+
+              let cleanRes = newArcRes.replace(/<\/?story_arc>/g, "").trim();
+              let finalArcContent = `<story_arc>\n${cleanRes}\n</story_arc>`;
+
+              // 3. 历史快照永久记录（用于回滚）
+              targetMsg.storyArcSnapshot = finalArcContent;
+              
+              // 4. 仅最新消息才有资格更新全局主线锚点
+              if (isLatestAI) {
+                  if (!session.personalConfig) session.personalConfig = {};
+                  session.personalConfig.storyArcAnchor = finalArcContent;
+                  console.log(`========== [主线总结最终插入内容] ==========\n${finalArcContent}`);
+              } else {
+                  if (dynConfig.debugMode) console.log("✧ 主线总结：检测到迟到的旧总结，仅写入历史快照，不污染全局状态");
+              }
           }
 
       } catch (e) {
           console.error("✧ 主线提取异常", e);
       }
   }
+
 
 
   async function updateStyleSummary(session, dynConfig, latestUserText = "") {
@@ -1551,13 +1606,14 @@ if (iteration === MAX_ITERS) {
   }
 
 
-  // === 状态栏与主线快照 防并发竞态回滚 ===
+  // === 状态栏与主线快照 防并发竞态回滚 (最终防漏水版) ===
   function rollbackAnchors(session, dynConfig) {
-      let lastValidAnchor = dynConfig.fixedAnchors[0] || ""; 
+      let lastValidAnchor = ""; 
       let lastValidArc = "";
       let foundAnchor = false;
       let foundArc = false;
       
+      // 逆序查找最近的一个 AI 留下的历史“脚印”
       for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
           if (session.dynamicContent[i].role === "assistant") {
               if (!foundAnchor && session.dynamicContent[i].anchorSnapshot !== undefined) {
@@ -1575,9 +1631,27 @@ if (iteration === MAX_ITERS) {
       if (!session.personalConfig.fixedAnchors) {
           session.personalConfig.fixedAnchors = {};
       }
-      session.personalConfig.fixedAnchors[0] = lastValidAnchor;
-      session.personalConfig.storyArcAnchor = lastValidArc;
+      
+      // === 【修复：精准回滚与归零洗白】 ===
+      
+      // 1. 状态栏回滚
+      if (foundAnchor) {
+          // 找到了历史快照，精准回滚到该快照
+          session.personalConfig.fixedAnchors[0] = lastValidAnchor;
+      } else {
+          // 没找到（删光了所有轮次），必须洗掉 AI 的残留，退回全局默认干净配置
+          session.personalConfig.fixedAnchors[0] = dynConfig.fixedAnchors[0] || "";
+      }
+
+      // 2. 主线剧情回滚
+      if (foundArc) {
+          session.personalConfig.storyArcAnchor = lastValidArc;
+      } else {
+          // 同理，删光了就彻底清空主线
+          session.personalConfig.storyArcAnchor = "";
+      }
   }
+
 
   async function fetchImageToBase64(url) {
     const transApiBaseUrl = dynamicConfig.imgTransApi;
