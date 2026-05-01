@@ -942,7 +942,7 @@ if (!seal.ext.find("AI-role")) {
                           const contentType = kbRes.headers.get("content-type");
                           let ragText = contentType && contentType.includes("application/json") ? ((await kbRes.json()).text || "") : (await kbRes.text());
                           if (ragText && ragText.trim() !== "") {
-                              session.ragContext = `<module_data>\n${ragText}\n</module_data>`;
+                              session.ragContext = `${ragText}`;
                               console.log(`========== [知识库(RAG)最终插入内容] ==========\n${session.ragContext}`);
                           }
                       }
