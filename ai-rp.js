@@ -1960,8 +1960,22 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         
         const oldSession = getSession(sessionKey);
         const newSession = new ChatGPTSession(dynamicConfig);
+        
+        // 1. 先导入存档数据，此时 newSession.personalConfig 存放的是历史状态
         newSession.importSession(savedData);
-        newSession.personalConfig = JSON.parse(JSON.stringify(oldSession.personalConfig));
+        
+        // 2. 提取存档中的专属上下文状态（防止空指针异常做安全回退）
+        const savedPersonal = newSession.personalConfig || {};
+        
+        // 3. 【精准合并】以当前运行环境为底板，只把该会话独有的“记忆块”插回去
+        newSession.personalConfig = {
+            ...oldSession.personalConfig,              // 继承当前有效的 API 密钥、端点、各项功能开关
+            moduleData: savedPersonal.moduleData,      // 精准还原：本地模组
+            systemPrompt: savedPersonal.systemPrompt,  // 精准还原：客制化系统提示
+            storyArcAnchor: savedPersonal.storyArcAnchor, // 精准还原：主线总结剧情
+            fixedAnchors: savedPersonal.fixedAnchors   // 精准还原：状态栏代码块记忆
+        };
+        
         newSession.anchor.refresh(dynamicConfig);
         updateSession(sessionKey, newSession); 
         seal.replyToSender(ctx, msg, `✧ 会话「${sessionName}」加载成功 锁定状态覆盖`);
