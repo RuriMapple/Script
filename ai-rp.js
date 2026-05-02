@@ -1542,36 +1542,16 @@ if (iteration === MAX_ITERS) {
                                       let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
                                       if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
                                       
-                                      let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
-                                      
-                                      const pConfig = session?.personalConfig || {};
-                                      const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
-
-                                      if (enableImage && pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
-                                          const { topImages, cleanedMarkdown } = filterAndScoreImages(pageRes);
-                                          let uniqueWebImages = [...new Set(topImages.map(img => img.url))].filter(url => url.startsWith('http')).slice(0, 10);
-                                          
-                                          if (uniqueWebImages.length > 0) {
-                                              let contentArray = [ { type: "text", text: cleanedMarkdown } ];
-                                              const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
-                                              const transResults = await Promise.all(transTasks);
-                                              
-                                              let successCount = 0;
-                                              transResults.forEach(b64 => {
-                                                  if (b64 && b64.startsWith('data:image')) {
-                                                      contentArray.push({ type: "image_url", image_url: { url: b64 } });
-                                                      successCount++;
-                                                  }
-                                              });
-                                              
-                                              if (dynConfig.debugMode) console.log(`✧ 读取网页图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片`);
-                                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: contentArray });
-                                          } else {
-                                              messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
-                                          }
-                                      } else {
-                                          messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
-                                      }
+                                                                        let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
+                                  
+                                  // 仅限文风总结：完全过滤 read_link 传入的 images，强制纯文本返回
+                                  if (pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
+                                      const { cleanedMarkdown } = filterAndScoreImages(pageRes);
+                                      if (dynConfig.debugMode) console.log(`✧ 文风总结读取网页：图片已完全过滤，仅返回纯文本`);
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
+                                  } else {
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
+                                  }
                                   } else {
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
                                   }
