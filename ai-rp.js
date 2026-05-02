@@ -1458,7 +1458,7 @@ if (session.abortController && session.abortController.signal.aborted) {
 
           const { pureText: cleanTail } = filterContent(latestUserText);
           const tailText = cleanTail.trim() ? `\nuser: ${cleanTail.trim()}` : "";
-          const prompt = dynConfig.styleSummaryPrefix + '\n' + historyText + tailText;
+          const prompt = "[前文记录]\n" + historyText + tailText + "\n\n[系统指令]\n" + dynConfig.styleSummaryPrefix;
 
           const isNetworkEnabled = (pConfig.enableNetwork !== null && pConfig.enableNetwork !== undefined) ? pConfig.enableNetwork : dynConfig.enableNetwork;
           let result = "";
@@ -1471,7 +1471,7 @@ if (session.abortController && session.abortController.signal.aborted) {
                   const currentModel = models[mIdx];
                   const payload = {
                       model: currentModel,
-                      temperature: dynConfig.temperature,
+                      temperature: 0.3,
                       max_tokens: dynConfig.maxTokens,
                       messages: messagesContext,
                       tools: [
