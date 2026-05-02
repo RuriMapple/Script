@@ -80,6 +80,7 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.registerBoolConfig(ext, "开启知识库检索", false);
   seal.ext.registerStringConfig(ext, "知识库检索API", "");
   seal.ext.registerBoolConfig(ext, "开启文风总结", false);
+  seal.ext.registerBoolConfig(ext, "开启语义压缩", true); // 默认开启，保持原有逻辑
   seal.ext.registerStringConfig(ext, "文风总结前缀", "请根据以下对话内容，提取当前最适合的参考书籍：\n");
   seal.ext.registerStringConfig(ext, "语义压缩前缀", "请提取以下用户输入的核心内容与意图 以利于向量检索（无需任何解释和客套话 直接返回短语）：\n");
   seal.ext.registerStringConfig(ext, "状态栏生成前缀", "请根据最新一轮AI的回答 结合原有的代码块状态 生成最新的状态栏 且必须使用```代码块包裹返回：\n");
@@ -156,6 +157,8 @@ if (!seal.ext.find("AI-role")) {
       this.statusBarPrefix = seal.ext.getStringConfig(this.ext, "状态栏生成前缀");
       
       this.enableStyleSummary = seal.ext.getBoolConfig(this.ext, "开启文风总结");
+      this.enableSemanticCompress = seal.ext.getBoolConfig(this.ext, "开启语义压缩");
+
       this.styleSummaryPrefix = seal.ext.getStringConfig(this.ext, "文风总结前缀");
 
       // 主线剧情载入
@@ -258,7 +261,7 @@ if (!seal.ext.find("AI-role")) {
         enableNetwork: null,  maxNetworkIterations: null, webpageMaxLength: null,
         enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,
         enableKBSync: null, kbSyncApi: null,
-        enableKBQuery: null, kbQueryApi: null,
+        enableKBQuery: null, kbQueryApi: null, enableSemanticCompress: null,
         maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
         moduleBaseUrl: null, moduleData: null, fixedAnchors: {}
       };
@@ -924,19 +927,33 @@ if (!seal.ext.find("AI-role")) {
                   let roleContext = roleCardsContent.trim() !== "" ? "[当前角色设定]\n" + roleCardsContent + "\n" : "";
                   // ==================================================================
 
-                  // 2. 组装最终 Prompt (加入 roleContext 角色设定前置)
-                  const compressPrompt = dynConfig.semanticPrefix + "\n" + roleContext + historyContext + "[最新输入]\n" + processedText;
+                  // 获取当前环境的语义压缩开关状态
+                  const enableSemanticCompress = (session.personalConfig.enableSemanticCompress !== null && session.personalConfig.enableSemanticCompress !== undefined) ? session.personalConfig.enableSemanticCompress : dynConfig.enableSemanticCompress;
                   
-                  const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
+                  let queryText = processedText; // 默认使用玩家原句进行检索
+                  
+                  // 如果开启了语义压缩，则去请求公用 API 提取意图
+                  if (enableSemanticCompress) {
+                      // 2. 组装最终 Prompt (加入 roleContext 角色设定前置)
+                      const compressPrompt = dynConfig.semanticPrefix + "\n" + roleContext + historyContext + "[最新输入]\n" + processedText;
+                      const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
+                      
+                      if (compressedText && compressedText.trim() !== "") {
+                          queryText = compressedText;
+                          if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", queryText);
+                      }
+                  } else {
+                      if (dynConfig.debugMode) console.log("✧ 知识库检索 未开启语义压缩，使用原句进行检索 ", queryText);
+                  }
 
-                 
-                  if (compressedText) {
-                      if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", compressedText);
+                  if (queryText) {
                       const kbRes = await safeFetchWithTimeout(kbQueryApi, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ query: compressedText, userId: userId, sessionId: sessionKey })
+                          // 这里改成传入 queryText
+                          body: JSON.stringify({ query: queryText, userId: userId, sessionId: sessionKey }) 
                       }, 100000);
+
                       
                       if (kbRes.ok) {
                           const contentType = kbRes.headers.get("content-type");
@@ -1977,6 +1994,7 @@ API密钥: ${formatMasked(p.apiKey)}
 知识库检索: ${formatBool(p.enableKBQuery)}
 知识库检索API: ${formatMasked(p.kbQueryApi)}
 文风总结: ${formatBool(p.enableStyleSummary)} 
+语义压缩: ${formatBool(p.enableSemanticCompress)}
 主线总结: ${formatBool(p.enableStoryArc)} 
 最大回复tokens数: ${formatVal(p.maxTokens)}
 最大回复字符数: ${formatVal(p.maxChars)}
@@ -2056,6 +2074,8 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         { on: "开启识别图片", off: "关闭识别图片", key: "enableImage", label: "图片识别" },
         { on: "开启图片识别", off: "关闭图片识别", key: "enableImage", label: "图片识别" },
         { on: "开启联网请求", off: "关闭联网请求", key: "enableNetwork", label: "联网请求" },
+        { on: "开启语义压缩", off: "关闭语义压缩", key: "enableSemanticCompress", label: "语义压缩" },
+
         { on: "开启知识库同步", off: "关闭知识库同步", key: "enableKBSync", label: "知识库同步" },
         { on: "开启知识库检索", off: "关闭知识库检索", key: "enableKBQuery", label: "知识库检索" },
         { on: "开启文风总结", off: "关闭文风总结", key: "enableStyleSummary", label: "文风总结" },
@@ -2144,7 +2164,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
   apiUrl: null, apiKey: null, modelName: null, 
   pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null, 
   maxNetworkIterations: null, webpageMaxLength: null, enableKBSync: null, kbSyncApi: null,
-  enableKBQuery: null, kbQueryApi: null,enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,
+  enableKBQuery: null, kbQueryApi: null,enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,enableSemanticCompress: null,
   temperature: null, top_p: null, top_k: null,
   presence_penalty: null, frequency_penalty: null, seed: null,
   depth: null, filterIdEnabled: null,
@@ -2165,6 +2185,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
             "开启识别图片": "enableImage", "开启图片识别": "enableImage", "调试模式": "debugMode", "开启调试模式": "debugMode",
             "联网请求": "enableNetwork", "开启联网请求": "enableNetwork", 
             "网页抓取最大字符数": "webpageMaxLength", "联网最大迭代次数": "maxNetworkIterations",
+"语义压缩": "enableSemanticCompress", "开启语义压缩": "enableSemanticCompress",
             "知识库同步": "enableKBSync", "开启知识库同步": "enableKBSync", "知识库同步api": "kbSyncApi",
             "知识库检索": "enableKBQuery", "开启知识库检索": "enableKBQuery", "知识库检索api": "kbQueryApi",
 "文风总结": "enableStyleSummary", "主线总结": "enableStoryArc",
