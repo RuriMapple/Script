@@ -2436,7 +2436,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
               const content = await response.text();
               
               // 【判定对齐】: 使用与云端会话完全一致的 <module_data> 标签包裹
-              const newContent = `<module_data>\n${content}\n</module_data>`;
+              const newContent = `${content}`;
               
               // 提取最新的当前会话记录
               let pureHistory = session.dynamicContent.map(msg => {
