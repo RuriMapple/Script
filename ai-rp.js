@@ -12,8 +12,17 @@ if (!seal.ext.find("AI-role")) {
   const ext = seal.ext.new("AI-role", "Sy", "1.9.99"); 
   seal.ext.register(ext);
  
-  // === 核心防卡死熔断器 (修复版：彻底物理阻断幽灵请求) ===
+  // === 核心防卡死熔断器 (修复版：彻底物理阻断幽灵请求 + 安全动态超时覆盖) ===
   async function safeFetchWithTimeout(url, options = {}, timeoutMs = 100000) {
+    
+    // 1. 直接通过 ext 读取底层配置，彻底避开 const 变量的暂存性死区(TDZ)报错风险
+    let confTimeout = parseInt(seal.ext.getStringConfig(ext, "请求超时时间(毫秒)"));
+    if (isNaN(confTimeout) || confTimeout <= 0) confTimeout = 100000;
+
+    // 2. 智能拦截：只有当代码里传入的是默认的硬编码 100000 时，才用后台配置覆盖它
+    // 这样不会影响未来可能加入的 5000ms 等特殊短请求
+    const finalTimeout = (timeoutMs === 100000) ? confTimeout : timeoutMs;
+
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     if (controller) options.signal = controller.signal;
 
@@ -21,13 +30,13 @@ if (!seal.ext.find("AI-role")) {
     const timeoutPromise = new Promise((_, reject) => 
       timerId = setTimeout(() => {
         if (controller) controller.abort(); 
-        reject(new Error("请求超时"));
-      }, timeoutMs)
+        reject(new Error(`请求超时 (${finalTimeout}ms)`));
+      }, finalTimeout) 
     );
 
     return Promise.race([fetch(url, options), timeoutPromise])
       .catch(err => {
-        if (err.name === 'AbortError') throw new Error("请求超时");
+        if (err.name === 'AbortError') throw new Error(`请求超时 (${finalTimeout}ms)`);
         throw err;
       })
       .finally(() => clearTimeout(timerId));
@@ -35,6 +44,7 @@ if (!seal.ext.find("AI-role")) {
 
 
   // 配置项注册
+  seal.ext.registerStringConfig(ext, "请求超时时间(毫秒)", "100000"); 
   seal.ext.registerStringConfig(ext, "API密钥", "sk-xxx");
   seal.ext.registerStringConfig(ext, "API端点", "https" + "://api.openai.com/v1/chat/completions");
   seal.ext.registerStringConfig(ext, "模型名称", "");
@@ -119,6 +129,7 @@ if (!seal.ext.find("AI-role")) {
       this.refresh();
     }
     refresh() {
+      this.requestTimeout = parseInt(seal.ext.getStringConfig(this.ext, "请求超时时间(毫秒)")) || 100000;
       this.apiKey = seal.ext.getStringConfig(this.ext, "API密钥");
       this.apiUrl = seal.ext.getStringConfig(this.ext, "API端点");
       this.modelName = seal.ext.getStringConfig(this.ext, "模型名称");
@@ -1101,7 +1112,7 @@ let pureHistory = session.dynamicContent.map(m => {
           const payload = {
               model: currentModel,
               messages: finalMessages,
-              temperature: dynConfig.temperature,
+              temperature: 0.3,
               max_tokens: dynConfig.maxTokens
           };
           try {
