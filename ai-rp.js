@@ -1112,7 +1112,7 @@ let pureHistory = session.dynamicContent.map(m => {
           const payload = {
               model: currentModel,
               messages: finalMessages,
-              temperature: 0.3,
+              temperature: 0.1,
               max_tokens: dynConfig.maxTokens
           };
           try {
@@ -1165,7 +1165,7 @@ let pureHistory = session.dynamicContent.map(m => {
           const currentModel = models[mIdx];
           const payload = {
               model: currentModel,
-              temperature: 0.3,
+              temperature: 0.1,
               max_tokens: dynConfig.maxTokens,
               messages: messagesContext,
               tools: [
@@ -1499,7 +1499,7 @@ if (session.abortController && session.abortController.signal.aborted) {
                   const currentModel = models[mIdx];
                   const payload = {
                       model: currentModel,
-                      temperature: 0.3,
+                      temperature: 0.1,
                       max_tokens: dynConfig.maxTokens,
                       messages: messagesContext,
                       tools: [
