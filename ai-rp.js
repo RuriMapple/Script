@@ -54,7 +54,7 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.registerStringConfig(ext, "公开API端点", "");
   seal.ext.registerStringConfig(ext, "公开模型名称", "");
   seal.ext.registerStringConfig(ext, "公开API上下文轮数", "2");
-
+  seal.ext.registerStringConfig(ext, "公用API全局系统提示", ""); 
   seal.ext.registerStringConfig(ext, "模组", "");
   seal.ext.registerStringConfig(ext, "外部模组服务地址", "http" + "://127.0.0.1:8080/modules/"); 
   seal.ext.registerStringConfig(ext, "角色卡", ""); 
@@ -137,6 +137,7 @@ if (!seal.ext.find("AI-role")) {
       this.publicApiUrl = seal.ext.getStringConfig(this.ext, "公开API端点");
       this.publicModelName = seal.ext.getStringConfig(this.ext, "公开模型名称");
       this.publicContextRounds = parseInt(seal.ext.getStringConfig(this.ext, "公开API上下文轮数")) || 2;
+this.publicApiSystemPrompt = seal.ext.getStringConfig(this.ext, "公用API全局系统提示");
       this.maxTokens = parseInt(seal.ext.getStringConfig(this.ext, "最大回复tokens数")) || 1000;
       this.maxChars = parseInt(seal.ext.getStringConfig(this.ext, "最大回复字符数")) || 1000;
       const roundsStr = seal.ext.getStringConfig(this.ext, "存储上下文轮数");
@@ -1103,10 +1104,15 @@ let pureHistory = session.dynamicContent.map(m => {
       }
 
       const models = modelsRaw.split(/[\s]+|\\n|\\r/).filter(m => m.trim() !== "");
-      let finalError = null;
+let finalError = null;
 
       const finalMessages = await buildVisionMessages(messages, session, dynConfig);
 
+      //将后台配置的 system 提示词置顶推入上下文首位
+      if (dynConfig.publicApiSystemPrompt && dynConfig.publicApiSystemPrompt.trim() !== "") {
+          finalMessages.unshift({ role: "system", content: dynConfig.publicApiSystemPrompt });
+      }
+      
       for (let mIdx = 0; mIdx < models.length; mIdx++) {
           const currentModel = models[mIdx];
           const payload = {
@@ -1495,7 +1501,13 @@ if (session.abortController && session.abortController.signal.aborted) {
               const models = dynConfig.publicModelName.split(/[\s]+|\\n|\\r/).filter(m => m.trim() !== "");
               let messagesContext = [{ role: "user", content: prompt }];
               
+              // 👇 新增这段：将 system 提示词置顶
+              if (dynConfig.publicApiSystemPrompt && dynConfig.publicApiSystemPrompt.trim() !== "") {
+                  messagesContext.unshift({ role: "system", content: dynConfig.publicApiSystemPrompt });
+              }
+
               for (let mIdx = 0; mIdx < models.length; mIdx++) {
+              // ... 保持原有代码不变 ...
                   const currentModel = models[mIdx];
                   const payload = {
                       model: currentModel,
