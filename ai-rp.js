@@ -1686,12 +1686,38 @@ if (iteration === MAX_ITERS) {
     });
   }
 
-  async function performSerperSearch(query, dynConfig) {
+async function performSerperSearch(query, dynConfig) {
+    // === 第一优先级：尝试使用自建 SearXNG 节点 ===
+    const searxngUrl = `https://search.mapple.uno/search?q=${encodeURIComponent(query)}&format=json`;
+    try {
+      if (dynConfig.debugMode) console.log(`✧ 尝试通过 SearXNG 搜索: ${query}`);
+      // 设定 15 秒强制超时，防止私有节点网络波动导致全局卡死
+      const response = await safeFetchWithTimeout(searxngUrl, { method: "GET" }, 15000); 
+      if (response.ok) {
+        const data = await response.json();
+        if (data.results && data.results.length > 0) {
+          if (dynConfig.debugMode) console.log("✧ SearXNG 搜索成功！");
+          // 加入严格的空值兜底，兼容所有子引擎的奇葩返回格式
+          return data.results.slice(0, 5).map(item => {
+              const title = item.title || "未知标题";
+              const snippet = item.content || item.snippet || "无摘要内容";
+              const link = item.url || (item.parsed_url ? item.parsed_url[0] : "");
+              return `标题: ${title}\n摘要: ${snippet}\n链接: ${link}`;
+          }).join("\n\n");
+        }
+      }
+      if (dynConfig.debugMode) console.log("✧ SearXNG 未返回有效结果，准备平滑切换 Serper 保底...");
+    } catch (e) {
+      if (dynConfig.debugMode) console.error("✧ SearXNG 请求异常(超时或节点离线)，已切换 Serper 保底:", e.message);
+    }
+
+    // === 第二优先级：SearXNG 失败或超时后，无缝使用原有的 Serper 保底 ===
     const apiKey = dynConfig.serperApiKey;
     if (!apiKey) {
         console.error("✧ 联网搜索 缺少 Serper搜索API密钥 配置");
-        return "✧ 未配置搜索API密钥 无法进行搜索";
+        return "✧ 搜索失败: SearXNG无结果且未配置Serper保底密钥";
     }
+    
     try {
         const response = await safeFetchWithTimeout("https" + "://google.serper.dev/search", {
             method: "POST",
@@ -1700,12 +1726,13 @@ if (iteration === MAX_ITERS) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({ q: query })
-        }, 100000);
+        }, 100000); // 维持原本的全局超时设定
         
         if (!response.ok) return "搜索API请求失败 状态码: " + response.status;
         const data = await response.json();
         if (data.organic && data.organic.length > 0) {
-            return data.organic.slice(0, 5).map(item => `标题: ${item.title}\n摘要: ${item.snippet}\n链接: ${item.link}`).join("\n\n");
+            if (dynConfig.debugMode) console.log("✧ Serper 保底搜索成功！");
+            return data.organic.slice(0, 5).map(item => `标题: ${item.title || "未知"}\n摘要: ${item.snippet || "无摘要"}\n链接: ${item.link || ""}`).join("\n\n");
         }
         return "未找到相关搜索结果  ";
     } catch (error) {
