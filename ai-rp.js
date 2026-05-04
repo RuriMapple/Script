@@ -945,24 +945,14 @@ if (!seal.ext.find("AI-role")) {
                   
                   // 如果开启了语义压缩，则去请求公用 API 提取意图
                   if (enableSemanticCompress) {
-                      const recentRounds = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(m => ({
-                          role: m.role,
-                          content: filterContent(typeof m.content === 'string' ? m.content : "").pureText
-                      }));
-                      const systemContent = dynConfig.semanticPrefix + (roleContext ? "\n" + roleContext : "");
-                      const compressMessages = [
-                          ...recentRounds,
-                          { role: "system", content: systemContent },
-                          { role: "user", content: processedText }
-                      ];
-                      
-                      const compressedText = await sendPublicAPIRequest(session, compressMessages, dynConfig);
+                      // 2. 组装最终 Prompt (加入 roleContext 角色设定前置)
+                      const compressPrompt = dynConfig.semanticPrefix + "\n" + roleContext + historyContext + "[最新输入]\n" + processedText;
+                      const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
                       
                       if (compressedText && compressedText.trim() !== "") {
                           queryText = compressedText;
                           if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", queryText);
                       }
-
                   } else {
                       if (dynConfig.debugMode) console.log("✧ 知识库检索 未开启语义压缩，使用原句进行检索 ", queryText);
                   }
@@ -1166,10 +1156,8 @@ let pureHistory = session.dynamicContent.map(m => {
 
       const messagesContextRaw = [
           ...recentHistoryMsgs,
-          { role: "system", content: dynConfig.networkPrefix },
-          { role: "user", content: userText }
+          { role: "user", content: dynConfig.networkPrefix + "\n" + userText }
       ];
-
 
       const messagesContext = await buildVisionMessages(messagesContextRaw, session, dynConfig);
 
@@ -1341,30 +1329,15 @@ if (session.abortController && session.abortController.signal.aborted) {
               }
           }
 
-          let historyMsgs = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(m => ({
+          const statusBarPrompt = dynConfig.statusBarPrefix + "\n\nuser: \n" + latestUserInput + "\n\nassistant: \n" + aiReply + "\n\n当前状态: \n" + combinedAnchor0;
+
+          const recentHistory = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(m => ({
               role: m.role,
-              content: filterContent(typeof m.content === 'string' ? m.content : "").pureText
+              content: typeof m.content === 'string' ? m.content : ""
           }));
           
-          if (historyMsgs.length > 0 && historyMsgs[historyMsgs.length - 1].role === "assistant") {
-              historyMsgs.pop();
-          }
-          if (historyMsgs.length > 0 && historyMsgs[historyMsgs.length - 1].role === "user") {
-              historyMsgs.pop();
-          }
-
-          const systemContent = dynConfig.statusBarPrefix + "\n\n[当前状态]: \n" + combinedAnchor0;
-          const latestInteraction = "user: \n" + latestUserInput + "\n\nassistant: \n" + aiReply;
-
-          const statusBarMessages = [
-              ...historyMsgs,
-              { role: "system", content: systemContent },
-              { role: "user", content: latestInteraction }
-          ];
-          
           // === 发起耗时的异步 API 请求 ===
-          const newStatusBarRes = await sendPublicAPIRequest(session, statusBarMessages, dynConfig);
-
+          const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: statusBarPrompt}], dynConfig);
           
           if (newStatusBarRes) {
               const allBlocks = newStatusBarRes.match(/```[\s\S]*?```/g);
@@ -1443,30 +1416,14 @@ if (session.abortController && session.abortController.signal.aborted) {
               }
           }
 
-          let historyMsgs = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(m => ({
+          const arcPrompt = dynConfig.storyArcPrefix + "\n\nuser: \n" + latestUserInput + "\n\nassistant: \n" + aiReply + "\n\n当前主线: \n" + currentArc;
+          const recentHistory = getLastNRounds(session.dynamicContent, dynConfig.publicContextRounds).map(m => ({
               role: m.role,
-              content: filterContent(typeof m.content === 'string' ? m.content : "").pureText
+              content: typeof m.content === 'string' ? m.content : ""
           }));
-          
-          if (historyMsgs.length > 0 && historyMsgs[historyMsgs.length - 1].role === "assistant") {
-              historyMsgs.pop();
-          }
-          if (historyMsgs.length > 0 && historyMsgs[historyMsgs.length - 1].role === "user") {
-              historyMsgs.pop();
-          }
-
-          const systemContent = dynConfig.storyArcPrefix + "\n\n[当前主线]: \n" + currentArc;
-          const latestInteraction = "user: \n" + latestUserInput + "\n\nassistant: \n" + aiReply;
-
-          const arcMessages = [
-              ...historyMsgs,
-              { role: "system", content: systemContent },
-              { role: "user", content: latestInteraction }
-          ];
 
           // === 发起耗时的异步 API 请求 ===
-          const newArcRes = await sendPublicAPIRequest(session, arcMessages, dynConfig);
-
+          const newArcRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: arcPrompt}], dynConfig);
           
           if (newArcRes && newArcRes.trim() !== "") {
               // === 【终极防御：存活与新鲜度双重校验】 ===
@@ -1522,26 +1479,21 @@ if (session.abortController && session.abortController.signal.aborted) {
           const rounds = getLastNRounds(session.dynamicContent, 2);
           if (rounds.length === 0 && !latestUserText) return;
 
-          const historyMsgs = rounds.map(m => ({
-              role: m.role,
-              content: filterContent(typeof m.content === 'string' ? m.content : "").pureText
-          }));
+          const historyText = rounds.map(m => {
+              const { pureText } = filterContent(typeof m.content === 'string' ? m.content : "");
+              return `${m.role === 'user' ? 'user' : 'assistant'}: ${pureText}`;
+          }).join('\n');
 
           const { pureText: cleanTail } = filterContent(latestUserText);
-          const finalUserInput = cleanTail.trim() ? cleanTail.trim() : "请总结当前文风";
+          const tailText = cleanTail.trim() ? `\nuser: ${cleanTail.trim()}` : "";
+          const prompt = "[前文记录]\n" + historyText + tailText + "\n\n[系统指令]\n" + dynConfig.styleSummaryPrefix;
 
           const isNetworkEnabled = (pConfig.enableNetwork !== null && pConfig.enableNetwork !== undefined) ? pConfig.enableNetwork : dynConfig.enableNetwork;
           let result = "";
 
-          let messagesContext = [
-              ...historyMsgs,
-              { role: "system", content: dynConfig.styleSummaryPrefix },
-              { role: "user", content: finalUserInput }
-          ];
-
           if (isNetworkEnabled && dynConfig.publicApiUrl && dynConfig.publicApiKey && dynConfig.publicModelName) {
               const models = dynConfig.publicModelName.split(/[\s]+|\\n|\\r/).filter(m => m.trim() !== "");
-              // 下面的代码会直接复用上面的 messagesContext，无需再次声明
+              let messagesContext = [{ role: "user", content: prompt }];
               
               for (let mIdx = 0; mIdx < models.length; mIdx++) {
                   const currentModel = models[mIdx];
@@ -1646,10 +1598,10 @@ if (iteration === MAX_ITERS) {
               }
               
               if (!result || result.trim() === "") {
-                  result = await sendPublicAPIRequest(session, messagesContext, dynConfig);
+                  result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
               }
           } else {
-              result = await sendPublicAPIRequest(session, messagesContext, dynConfig);
+              result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
           }
 
           if (result && result.trim() !== '') {
