@@ -11,18 +11,40 @@
 if (!seal.ext.find("AI-role")) {
   const ext = seal.ext.new("AI-role", "Sy", "1.9.99"); 
   seal.ext.register(ext);
-  
-  // === 核心防卡死熔断器 ===
-  async function safeFetchWithTimeout(url, options, timeoutMs = 100000) {
+ 
+  // === 核心防卡死熔断器 (修复版：彻底物理阻断幽灵请求 + 安全动态超时覆盖) ===
+  async function safeFetchWithTimeout(url, options = {}, timeoutMs = 100000) {
+    
+    // 1. 直接通过 ext 读取底层配置，彻底避开 const 变量的暂存性死区(TDZ)报错风险
+    let confTimeout = parseInt(seal.ext.getStringConfig(ext, "请求超时时间(毫秒)"));
+    if (isNaN(confTimeout) || confTimeout <= 0) confTimeout = 100000;
+
+    // 2. 智能拦截：只有当代码里传入的是默认的硬编码 100000 时，才用后台配置覆盖它
+    // 这样不会影响未来可能加入的 5000ms 等特殊短请求
+    const finalTimeout = (timeoutMs === 100000) ? confTimeout : timeoutMs;
+
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    if (controller) options.signal = controller.signal;
+
     let timerId;
     const timeoutPromise = new Promise((_, reject) => 
-      timerId = setTimeout(() => reject(new Error("请求超时")), timeoutMs)
+      timerId = setTimeout(() => {
+        if (controller) controller.abort(); 
+        reject(new Error(`请求超时 (${finalTimeout}ms)`));
+      }, finalTimeout) 
     );
+
     return Promise.race([fetch(url, options), timeoutPromise])
+      .catch(err => {
+        if (err.name === 'AbortError') throw new Error(`请求超时 (${finalTimeout}ms)`);
+        throw err;
+      })
       .finally(() => clearTimeout(timerId));
   }
 
+
   // 配置项注册
+  seal.ext.registerStringConfig(ext, "请求超时时间(毫秒)", "100000"); 
   seal.ext.registerStringConfig(ext, "API密钥", "sk-xxx");
   seal.ext.registerStringConfig(ext, "API端点", "https" + "://api.openai.com/v1/chat/completions");
   seal.ext.registerStringConfig(ext, "模型名称", "");
@@ -53,7 +75,6 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.registerBoolConfig(ext, "开启识别图片", false); 
   seal.ext.registerBoolConfig(ext, "开启调试模式", false); 
   seal.ext.registerBoolConfig(ext, "开启联网请求", false); 
-  seal.ext.registerBoolConfig(ext, "向知识库推送模组", false); 
   
   // === 联网抓取参数 ===
   seal.ext.registerStringConfig(ext, "Serper搜索API密钥", ""); 
@@ -69,6 +90,7 @@ if (!seal.ext.find("AI-role")) {
   seal.ext.registerBoolConfig(ext, "开启知识库检索", false);
   seal.ext.registerStringConfig(ext, "知识库检索API", "");
   seal.ext.registerBoolConfig(ext, "开启文风总结", false);
+  seal.ext.registerBoolConfig(ext, "开启语义压缩", true); // 默认开启，保持原有逻辑
   seal.ext.registerStringConfig(ext, "文风总结前缀", "请根据以下对话内容，提取当前最适合的参考书籍：\n");
   seal.ext.registerStringConfig(ext, "语义压缩前缀", "请提取以下用户输入的核心内容与意图 以利于向量检索（无需任何解释和客套话 直接返回短语）：\n");
   seal.ext.registerStringConfig(ext, "状态栏生成前缀", "请根据最新一轮AI的回答 结合原有的代码块状态 生成最新的状态栏 且必须使用```代码块包裹返回：\n");
@@ -107,6 +129,7 @@ if (!seal.ext.find("AI-role")) {
       this.refresh();
     }
     refresh() {
+      this.requestTimeout = parseInt(seal.ext.getStringConfig(this.ext, "请求超时时间(毫秒)")) || 100000;
       this.apiKey = seal.ext.getStringConfig(this.ext, "API密钥");
       this.apiUrl = seal.ext.getStringConfig(this.ext, "API端点");
       this.modelName = seal.ext.getStringConfig(this.ext, "模型名称");
@@ -130,7 +153,6 @@ if (!seal.ext.find("AI-role")) {
       this.enableImage = seal.ext.getBoolConfig(this.ext, "开启识别图片"); 
       this.debugMode = seal.ext.getBoolConfig(this.ext, "开启调试模式"); 
       this.enableNetwork = seal.ext.getBoolConfig(this.ext, "开启联网请求"); 
-      this.pushModuleToKB = seal.ext.getBoolConfig(this.ext, "向知识库推送模组");
       this.serperApiKey = seal.ext.getStringConfig(this.ext, "Serper搜索API密钥"); 
       this.networkPrefix = seal.ext.getStringConfig(this.ext, "联网请求前缀");
       
@@ -146,6 +168,8 @@ if (!seal.ext.find("AI-role")) {
       this.statusBarPrefix = seal.ext.getStringConfig(this.ext, "状态栏生成前缀");
       
       this.enableStyleSummary = seal.ext.getBoolConfig(this.ext, "开启文风总结");
+      this.enableSemanticCompress = seal.ext.getBoolConfig(this.ext, "开启语义压缩");
+
       this.styleSummaryPrefix = seal.ext.getStringConfig(this.ext, "文风总结前缀");
 
       // 主线剧情载入
@@ -245,10 +269,10 @@ if (!seal.ext.find("AI-role")) {
         temperature: null, top_p: null, top_k: null,
         presence_penalty: null, frequency_penalty: null, seed: null,
         depth: null, filterIdEnabled: null, enableImage: null, debugMode: null, 
-        enableNetwork: null, pushModuleToKB: null, maxNetworkIterations: null, webpageMaxLength: null,
+        enableNetwork: null,  maxNetworkIterations: null, webpageMaxLength: null,
         enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,
         enableKBSync: null, kbSyncApi: null,
-        enableKBQuery: null, kbQueryApi: null,
+        enableKBQuery: null, kbQueryApi: null, enableSemanticCompress: null,
         maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
         moduleBaseUrl: null, moduleData: null, fixedAnchors: {}
       };
@@ -891,22 +915,63 @@ if (!seal.ext.find("AI-role")) {
               try {
                   await new Promise(resolve => setTimeout(resolve, 500));
                   
-                  const compressPrompt = dynConfig.semanticPrefix + "\n" + processedText;
-                  const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
+                  // 1. 提取最近 2 轮历史记录作为语境支撑
+                  const recentRounds = getLastNRounds(session.dynamicContent, 2);
+                  let historyContext = "";
+                  if (recentRounds.length > 0) {
+                      historyContext = "[前文背景]\n" + recentRounds.map(m => {
+                          const { pureText } = filterContent(typeof m.content === 'string' ? m.content : "");
+                          return `${m.role === 'user' ? 'user' : 'assistant'}: ${pureText}`;
+                      }).join('\n') + "\n\n";
+                  }
+
+                  // ================= 新增：提取角色卡并注入到压缩语义中 =================
+                  let roleCardsContent = "";
+                  if (session.lockedContents && session.lockedContents.roleCards) {
+                      for (const cardId in session.lockedContents.roleCards) {
+                          const cardData = session.lockedContents.roleCards[cardId];
+                          if (cardData && cardData.content) {
+                              roleCardsContent += `\`\`\`角色卡${cardId}\n${cardData.content}\n\`\`\`\n`;
+                          }
+                      }
+                  }
+                  let roleContext = roleCardsContent.trim() !== "" ? "[当前角色设定]\n" + roleCardsContent + "\n" : "";
+                  // ==================================================================
+
+                  // 获取当前环境的语义压缩开关状态
+                  const enableSemanticCompress = (session.personalConfig.enableSemanticCompress !== null && session.personalConfig.enableSemanticCompress !== undefined) ? session.personalConfig.enableSemanticCompress : dynConfig.enableSemanticCompress;
                   
-                  if (compressedText) {
-                      if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", compressedText);
+                  let queryText = processedText; // 默认使用玩家原句进行检索
+                  
+                  // 如果开启了语义压缩，则去请求公用 API 提取意图
+                  if (enableSemanticCompress) {
+                      // 2. 组装最终 Prompt (加入 roleContext 角色设定前置)
+                      const compressPrompt = dynConfig.semanticPrefix + "\n" + roleContext + historyContext + "[最新输入]\n" + processedText;
+                      const compressedText = await sendPublicAPIRequest(session, [{role: "user", content: compressPrompt}], dynConfig);
+                      
+                      if (compressedText && compressedText.trim() !== "") {
+                          queryText = compressedText;
+                          if (dynConfig.debugMode) console.log("✧ 知识库检索 提取到的压缩语义 ", queryText);
+                      }
+                  } else {
+                      if (dynConfig.debugMode) console.log("✧ 知识库检索 未开启语义压缩，使用原句进行检索 ", queryText);
+                  }
+
+                  if (queryText) {
                       const kbRes = await safeFetchWithTimeout(kbQueryApi, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ query: compressedText, userId: userId, sessionId: sessionKey })
+                          // 这里改成传入 queryText
+                          body: JSON.stringify({ query: queryText, userId: userId, sessionId: sessionKey }) 
                       }, 100000);
+
                       
                       if (kbRes.ok) {
                           const contentType = kbRes.headers.get("content-type");
                           let ragText = contentType && contentType.includes("application/json") ? ((await kbRes.json()).text || "") : (await kbRes.text());
                           if (ragText && ragText.trim() !== "") {
-                              session.ragContext = `<module_data>\n${ragText}\n</module_data>`;
+                              session.ragContext = `${ragText}`;
+                              console.log(`========== [知识库(RAG)最终插入内容] ==========\n${session.ragContext}`);
                           }
                       }
                   }
@@ -976,9 +1041,10 @@ if (!seal.ext.find("AI-role")) {
                   });
                   
                   session.webSearchContext = contentArray;
-                  if (dynConfig.debugMode) console.log(`✧ 图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片（经 Worker 转码）`);
+                  console.log(`========== [WebSearch最终插入内容 (多模态)] ==========\n<web_search>\n${pageContents}\n</web_search>\n[外加 ${successCount} 张转码图片]`);
               } else {
                   session.webSearchContext = `<web_search>\n${pageContents}\n</web_search>`;
+                  console.log(`========== [WebSearch最终插入内容 (纯文本)] ==========\n${session.webSearchContext}`);
               }
           }
       }
@@ -991,22 +1057,21 @@ if (!seal.ext.find("AI-role")) {
 
       if (!enableSync || !syncApiUrl) return;
 
-      const pushModule = (pConfig.pushModuleToKB !== null && pConfig.pushModuleToKB !== undefined) ? pConfig.pushModuleToKB : dynConfig.pushModuleToKB;
-
       try {
-          let moduleContent = null;
-          if (pushModule && session.lockedContents.module) {
-              moduleContent = session.lockedContents.module.content;
-          }
+          // [修改点]：彻底解耦，常规的云端同步不再自动附带模组内容
+          let moduleContent = null; 
 
-          let pureHistory = session.dynamicContent.map(msg => {
-              let { pureText } = filterContent(msg.content);
-              if (typeof pureText === 'string') {
-                  pureText = pureText.replace(/^\(QQ:\d+\)\s*/i, "");
-                  pureText = pureText.replace(/^\(.*?\)\s*/, ""); 
-              }
-              return { role: msg.role, content: pureText };
-          });
+let pureHistory = session.dynamicContent.map(m => {
+    // 👇 同样改为提取 filteredContent
+    let { filteredContent } = filterContent(m.content);
+    let syncText = filteredContent;
+    if (typeof syncText === 'string') {
+        syncText = syncText.replace(/^\(QQ:\d+\)\s*/i, "");
+        syncText = syncText.replace(/^\(.*?\)\s*/, ""); 
+    }
+    return { role: m.role, content: syncText };
+});
+
 
           const syncPayload = {
               sessionId: sessionKey, 
@@ -1047,7 +1112,7 @@ if (!seal.ext.find("AI-role")) {
           const payload = {
               model: currentModel,
               messages: finalMessages,
-              temperature: dynConfig.temperature,
+              temperature: 0.1,
               max_tokens: dynConfig.maxTokens
           };
           try {
@@ -1058,7 +1123,11 @@ if (!seal.ext.find("AI-role")) {
               }, 100000);
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               const data = await response.json();
-              return data.choices[0].message.content || "";
+              const resultText = data.choices[0].message.content || "";
+              // 3. 固定打印公开API执行的各种总结/压缩任务
+              console.log(`========== [公开API后台行为 (${currentModel})] ==========\n${resultText}`);
+              return resultText;
+
           } catch (err) {
               finalError = err;
               if (dynConfig.debugMode) console.error(`✧ API异常 模型 ${currentModel} 请求失败:`, err);
@@ -1096,16 +1165,27 @@ if (!seal.ext.find("AI-role")) {
           const currentModel = models[mIdx];
           const payload = {
               model: currentModel,
-              temperature: 0.3,
+              temperature: 0.1,
+              max_tokens: dynConfig.maxTokens,
               messages: messagesContext,
-              tools: [{
-                  type: "function",
-                  function: {
-                      name: "web_search",
-                      description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
-                      parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+              tools: [
+                  {
+                      type: "function",
+                      function: {
+                          name: "web_search",
+                          description: "使用搜索引擎查询实时信息、新闻、不知道的信息。当用户询问最新事实、当前事件、不明确的信息时使用此工具。必须传入query搜索词  ",
+                          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+                      }
+                  },
+                  {
+                      type: "function",
+                      function: {
+                          name: "read_link",
+                          description: "读取指定网页链接的详细文本内容。当搜索结果不足以提供完整信息，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
+                          parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
+                      }
                   }
-              }],
+              ],
               tool_choice: "auto"
           };
 
@@ -1115,6 +1195,11 @@ if (!seal.ext.find("AI-role")) {
 
           while (iteration < MAX_ITERS) {
               iteration++;
+if (session.abortController && session.abortController.signal.aborted) {
+    if (dynConfig.debugMode) console.log("✧ 联网轮询检测到中止信号 提前终止迭代");
+    break; 
+}
+
               if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
 
               try {
@@ -1132,15 +1217,52 @@ if (!seal.ext.find("AI-role")) {
                       for (let tc of msgObj.tool_calls) {
                           if (["web_search", "google_search"].includes(tc.function.name)) {
                               let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                              if (dynConfig.debugMode) console.log(`✧ 联网思考 工具请求: ${args.query}`);
-                              let searchRes = await performSerperSearch(args.query || "");
+                              console.log(`========== [公开API联网检索] 请求搜索: ${args.query} ==========`);
+                              let searchRes = await performSerperSearch(args.query || "", dynConfig);
+
                               messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
+                          } else if (tc.function.name === "read_link") {
+                              let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
+                              console.log(`========== [公开API联网检索] 请求读取网页: ${args.url} ==========`);
+                              
+                              let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
+                              
+                              const pConfig = session?.personalConfig || {};
+                              const enableImage = (pConfig.enableImage !== null && pConfig.enableImage !== undefined) ? pConfig.enableImage : dynConfig.enableImage;
+
+                              if (enableImage && pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
+                                  const { topImages, cleanedMarkdown } = filterAndScoreImages(pageRes);
+                                  let uniqueWebImages = [...new Set(topImages.map(img => img.url))].filter(url => url.startsWith('http')).slice(0, 10);
+                                  
+                                  if (uniqueWebImages.length > 0) {
+                                      let contentArray = [ { type: "text", text: cleanedMarkdown } ];
+                                      const transTasks = uniqueWebImages.map(url => fetchImageToBase64(url));
+                                      const transResults = await Promise.all(transTasks);
+                                      
+                                      let successCount = 0;
+                                      transResults.forEach(b64 => {
+                                          if (b64 && b64.startsWith('data:image')) {
+                                              contentArray.push({ type: "image_url", image_url: { url: b64 } });
+                                              successCount++;
+                                          }
+                                      });
+                                      
+                                      if (dynConfig.debugMode) console.log(`✧ 读取网页图片挂载 已追加 ${successCount}/${uniqueWebImages.length} 张图片`);
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: contentArray });
+                                  } else {
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
+                                  }
+                              } else {
+                                  messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
+                              }
                           } else {
                               messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
                           }
                       }
                   } else {
                       finalOutput = msgObj.content || "";
+                      // 4. 打印联网模型思考完毕后的最终输出
+                      console.log(`========== [公开API联网思考] 最终输出 ==========\n${finalOutput}`);
                       success = true;
                       break;
                   }
@@ -1169,6 +1291,15 @@ if (!seal.ext.find("AI-role")) {
       const enableKBQuery = (session.personalConfig.enableKBQuery !== null && session.personalConfig.enableKBQuery !== undefined) ? session.personalConfig.enableKBQuery : dynConfig.enableKBQuery;
       if (!enableKBQuery) return;
       try {
+          // === 【核心机制：提前锁定目标消息】 ===
+          let targetMsg = null;
+          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+              if (session.dynamicContent[i].role === "assistant") {
+                  targetMsg = session.dynamicContent[i];
+                  break;
+              }
+          }
+
           let currentAnchor0 = (session.personalConfig.fixedAnchors && session.personalConfig.fixedAnchors[0] !== undefined) 
                                 ? session.personalConfig.fixedAnchors[0] 
                                 : (dynConfig.fixedAnchors[0] || "");
@@ -1204,27 +1335,56 @@ if (!seal.ext.find("AI-role")) {
               role: m.role,
               content: typeof m.content === 'string' ? m.content : ""
           }));
+          
+          // === 发起耗时的异步 API 请求 ===
           const newStatusBarRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: statusBarPrompt}], dynConfig);
           
           if (newStatusBarRes) {
-              const codeBlockMatch = newStatusBarRes.match(/```[\s\S]*?```/);
-              if (codeBlockMatch) {
-                  if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
-                  session.personalConfig.fixedAnchors[0] = codeBlockMatch[0];
+              const allBlocks = newStatusBarRes.match(/```[\s\S]*?```/g);
+              let validCodeBlock = null;
+
+              if (allBlocks) {
+                  validCodeBlock = allBlocks.find(block => !block.includes("==UserScript=="));
+              }
+
+              if (validCodeBlock) {
+                  // === 【终极防御：存活与新鲜度双重校验】 ===
+                  const msgIndex = session.dynamicContent.indexOf(targetMsg);
                   
-                  for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+                  // 1. 存活校验：如果被删除了，直接丢弃
+                  if (msgIndex === -1) {
+                      if (dynConfig.debugMode) console.log("✧ 状态栏：目标轮次已被删除，已阻断更新");
+                      return;
+                  }
+
+                  // 2. 新鲜度校验：检查它之后是否产生了新的 AI 回复
+                  let isLatestAI = true;
+                  for (let i = session.dynamicContent.length - 1; i > msgIndex; i--) {
                       if (session.dynamicContent[i].role === "assistant") {
-                          session.dynamicContent[i].anchorSnapshot = codeBlockMatch[0];
+                          isLatestAI = false;
                           break;
                       }
                   }
-                  if (dynConfig.debugMode) console.log("✧ 状态栏更新 成功更新个人配置项：锚定项0");
+
+                  // 3. 无论如何，只要活着，就给这条历史消息挂上快照（用于回滚）
+                  targetMsg.anchorSnapshot = validCodeBlock;
+                  
+                  // 4. 只有当它是当前最新的 AI 消息时，才允许修改全局环境
+                  if (isLatestAI) {
+                      if (!session.personalConfig.fixedAnchors) session.personalConfig.fixedAnchors = {};
+                      session.personalConfig.fixedAnchors[0] = validCodeBlock;
+                      console.log(`========== [状态栏(锚定项0)最终插入内容] ==========\n${validCodeBlock}`);
+                  } else {
+                      if (dynConfig.debugMode) console.log("✧ 状态栏：检测到迟到的旧总结，仅写入历史快照，不污染全局状态");
+                  }
               }
           }
       } catch (e) {
           console.error("✧ 状态栏提取异常", e);
       }
   }
+
+
 
   // === 【新增】并发主线总结功能 ===
   async function updateStoryArc(session, aiReply, dynConfig) {
@@ -1236,6 +1396,15 @@ if (!seal.ext.find("AI-role")) {
       if (!enableStoryArc) return;
 
       try {
+          // === 【核心机制：提前锁定目标消息】 ===
+          let targetMsg = null;
+          for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
+              if (session.dynamicContent[i].role === "assistant") {
+                  targetMsg = session.dynamicContent[i];
+                  break;
+              }
+          }
+
           let currentArc = pConfig.storyArcAnchor || "";
           let latestUserInput = "";
           const dynamic = session.dynamicContent;
@@ -1253,27 +1422,50 @@ if (!seal.ext.find("AI-role")) {
               content: typeof m.content === 'string' ? m.content : ""
           }));
 
+          // === 发起耗时的异步 API 请求 ===
           const newArcRes = await sendPublicAPIRequest(session, [...recentHistory, {role: "user", content: arcPrompt}], dynConfig);
           
-          if (newArcRes) {
-              const match = newArcRes.match(/<story_arc>[\s\S]*?<\/story_arc>/);
-              if (match) {
-                  if (!session.personalConfig) session.personalConfig = {};
-                  session.personalConfig.storyArcAnchor = match[0];
-                  
-                  for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
-                      if (session.dynamicContent[i].role === "assistant") {
-                          session.dynamicContent[i].storyArcSnapshot = match[0];
-                          break;
-                      }
+          if (newArcRes && newArcRes.trim() !== "") {
+              // === 【终极防御：存活与新鲜度双重校验】 ===
+              const msgIndex = session.dynamicContent.indexOf(targetMsg);
+              
+              // 1. 存活校验：如果被删除了，直接丢弃
+              if (msgIndex === -1) {
+                  if (dynConfig.debugMode) console.log("✧ 主线总结：目标轮次已被删除，已阻断更新");
+                  return;
+              }
+
+              // 2. 新鲜度校验：检查它之后是否产生了新的 AI 回复
+              let isLatestAI = true;
+              for (let i = session.dynamicContent.length - 1; i > msgIndex; i--) {
+                  if (session.dynamicContent[i].role === "assistant") {
+                      isLatestAI = false;
+                      break;
                   }
-                  if (dynConfig.debugMode) console.log("✧ 主线总结更新 成功更新快照");
+              }
+
+              let cleanRes = newArcRes.replace(/<\/?story_arc>/g, "").trim();
+              let finalArcContent = `<story_arc>\n${cleanRes}\n</story_arc>`;
+
+              // 3. 历史快照永久记录（用于回滚）
+              targetMsg.storyArcSnapshot = finalArcContent;
+              
+              // 4. 仅最新消息才有资格更新全局主线锚点
+              if (isLatestAI) {
+                  if (!session.personalConfig) session.personalConfig = {};
+                  session.personalConfig.storyArcAnchor = finalArcContent;
+                  console.log(`========== [主线总结最终插入内容] ==========\n${finalArcContent}`);
+              } else {
+                  if (dynConfig.debugMode) console.log("✧ 主线总结：检测到迟到的旧总结，仅写入历史快照，不污染全局状态");
               }
           }
+
       } catch (e) {
           console.error("✧ 主线提取异常", e);
       }
   }
+
+
 
   async function updateStyleSummary(session, dynConfig, latestUserText = "") {
       const pConfig = session.personalConfig || {};
@@ -1294,7 +1486,7 @@ if (!seal.ext.find("AI-role")) {
 
           const { pureText: cleanTail } = filterContent(latestUserText);
           const tailText = cleanTail.trim() ? `\nuser: ${cleanTail.trim()}` : "";
-          const prompt = dynConfig.styleSummaryPrefix + '\n' + historyText + tailText;
+          const prompt = "[前文记录]\n" + historyText + tailText + "\n\n[系统指令]\n" + dynConfig.styleSummaryPrefix;
 
           const isNetworkEnabled = (pConfig.enableNetwork !== null && pConfig.enableNetwork !== undefined) ? pConfig.enableNetwork : dynConfig.enableNetwork;
           let result = "";
@@ -1307,16 +1499,27 @@ if (!seal.ext.find("AI-role")) {
                   const currentModel = models[mIdx];
                   const payload = {
                       model: currentModel,
-                      temperature: dynConfig.temperature,
+                      temperature: 0.1,
+                      max_tokens: dynConfig.maxTokens,
                       messages: messagesContext,
-                      tools: [{
-                          type: "function",
-                          function: {
-                              name: "web_search",
-                              description: "使用搜索引擎查询书籍、文学作品、作者、标志段落等相关信息。当需要为当前对话寻找最匹配的参考书籍时使用此工具。",
-                              parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+                      tools: [
+                          {
+                              type: "function",
+                              function: {
+                                  name: "web_search",
+                                  description: "使用搜索引擎查询书籍、文学作品、作者、原文段落等相关信息。当需要为当前对话寻找匹配的参考书籍时使用此工具。",
+                                  parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+                              }
+                          },
+                          {
+                              type: "function",
+                              function: {
+                                  name: "read_link",
+                                  description: "读取指定网页链接的详细文本内容。当搜索结果并未提供原文，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
+                                  parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
+                              }
                           }
-                      }],
+                      ],
                       tool_choice: "auto"
                   };
 
@@ -1326,9 +1529,26 @@ if (!seal.ext.find("AI-role")) {
 
                   while (iteration < MAX_ITERS) {
                       iteration++;
-                      if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; }
+if (session.abortController && session.abortController.signal.aborted) {
+    if (dynConfig.debugMode) console.log("✧ 联网轮询检测到中止信号 提前终止迭代");
+    break; 
+}
+
+                      
+// ==== 【修复：统一使用兼容性更高的 auto，并在最后收回工具】 ====
+if (iteration === MAX_ITERS) { 
+    // 最后一轮：没收所有工具，逼它立刻开口总结！
+    delete payload.tools; 
+    delete payload.tool_choice; 
+} else {
+    // 恢复自由身，全程使用 auto 确保兼容性，由模型自行决定是否搜索
+    payload.tool_choice = "auto";
+}
+// ==========================================
 
                       try {
+                          // ... 请求 API ...
+
                           const response = await safeFetchWithTimeout(dynConfig.publicApiUrl, {
                               method: "POST",
                               headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
@@ -1344,8 +1564,22 @@ if (!seal.ext.find("AI-role")) {
                                   if (["web_search", "google_search"].includes(tc.function.name)) {
                                       let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
                                       if (dynConfig.debugMode) console.log(`✧ 文风总结联网 工具请求: ${args.query}`);
-                                      let searchRes = await performSerperSearch(args.query || "");
+                                      let searchRes = await performSerperSearch(args.query || "", dynConfig);
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
+                                  } else if (tc.function.name === "read_link") {
+                                      let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
+                                      if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
+                                      
+                                                                        let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
+                                  
+                                  // 仅限文风总结：完全过滤 read_link 传入的 images，强制纯文本返回
+                                  if (pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
+                                      const { cleanedMarkdown } = filterAndScoreImages(pageRes);
+                                      if (dynConfig.debugMode) console.log(`✧ 文风总结读取网页：图片已完全过滤，仅返回纯文本`);
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
+                                  } else {
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
+                                  }
                                   } else {
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
                                   }
@@ -1372,20 +1606,22 @@ if (!seal.ext.find("AI-role")) {
 
           if (result && result.trim() !== '') {
               session.styleContext = `<book_refs>\n${result.trim()}\n</book_refs>`;
-              if (dynConfig.debugMode) console.log("✧ 文风总结 已更新:\n" + session.styleContext);
+              console.log(`========== [文风总结最终插入内容] ==========\n${session.styleContext}`);
           }
       } catch (e) {
           console.error("✧ 文风总结异常", e);
       }
   }
 
-  // === 状态栏与主线快照 防并发竞态回滚 ===
+
+  // === 状态栏与主线快照 防并发竞态回滚 (最终防漏水版) ===
   function rollbackAnchors(session, dynConfig) {
-      let lastValidAnchor = dynConfig.fixedAnchors[0] || ""; 
+      let lastValidAnchor = ""; 
       let lastValidArc = "";
       let foundAnchor = false;
       let foundArc = false;
       
+      // 逆序查找最近的一个 AI 留下的历史“脚印”
       for (let i = session.dynamicContent.length - 1; i >= 0; i--) {
           if (session.dynamicContent[i].role === "assistant") {
               if (!foundAnchor && session.dynamicContent[i].anchorSnapshot !== undefined) {
@@ -1403,9 +1639,27 @@ if (!seal.ext.find("AI-role")) {
       if (!session.personalConfig.fixedAnchors) {
           session.personalConfig.fixedAnchors = {};
       }
-      session.personalConfig.fixedAnchors[0] = lastValidAnchor;
-      session.personalConfig.storyArcAnchor = lastValidArc;
+      
+      // === 【修复：精准回滚与归零洗白】 ===
+      
+      // 1. 状态栏回滚
+      if (foundAnchor) {
+          // 找到了历史快照，精准回滚到该快照
+          session.personalConfig.fixedAnchors[0] = lastValidAnchor;
+      } else {
+          // 没找到（删光了所有轮次），必须洗掉 AI 的残留，退回全局默认干净配置
+          session.personalConfig.fixedAnchors[0] = dynConfig.fixedAnchors[0] || "";
+      }
+
+      // 2. 主线剧情回滚
+      if (foundArc) {
+          session.personalConfig.storyArcAnchor = lastValidArc;
+      } else {
+          // 同理，删光了就彻底清空主线
+          session.personalConfig.storyArcAnchor = "";
+      }
   }
+
 
   async function fetchImageToBase64(url) {
     const transApiBaseUrl = dynamicConfig.imgTransApi;
@@ -1432,8 +1686,8 @@ if (!seal.ext.find("AI-role")) {
     });
   }
 
-  async function performSerperSearch(query) {
-    const apiKey = dynamicConfig.serperApiKey;
+  async function performSerperSearch(query, dynConfig) {
+    const apiKey = dynConfig.serperApiKey;
     if (!apiKey) {
         console.error("✧ 联网搜索 缺少 Serper搜索API密钥 配置");
         return "✧ 未配置搜索API密钥 无法进行搜索";
@@ -1472,6 +1726,18 @@ if (!seal.ext.find("AI-role")) {
         
         if (!response.ok) return "✧ 抓取网页失败 状态码: " + response.status;
         const text = await response.text();
+
+        // === 【新增：乱码防爆盾】 ===
+        // 使用 \ufffd 代表 Unicode 替换字符（即那个黑底菱形问号），这样最安全，不会被编辑器吞掉
+        const garbledCount = (text.match(/\ufffd/g) || []).length;
+        
+        // 如果文本总长度大于100，且乱码率超过 5%，直接判定为编码不兼容，拦截注入
+        if (text.length > 100 && (garbledCount / text.length) > 0.05) {
+             console.error(`✧ 拦截到高浓度乱码网页 (可能是GBK编码): ${url}`);
+             return "✧ 抓取网页失败: 目标网页使用了古老的GBK编码或非标准格式，无法解析内容，请更换其他现代网页参考。";
+        }
+        // ===========================
+
         return text.length > maxLength ? text.substring(0, maxLength) + "\n...[内容过长已截断]" : text;
     } catch (error) {
         console.error("✧ 网页抓取异常 ", error);
@@ -1479,16 +1745,17 @@ if (!seal.ext.find("AI-role")) {
     }
   }
 
+
   function renderText(originalText) {
     if (!originalText) return originalText;
 
     let rendered = originalText
       .replace(/\*\*([\s\S]*?)\*\*/g, '「$1」') 
       .replace(/---/g, '⊹═══') 
-.replace(/---/g, '⊹═══') 
 .replace(/\*\*\*/g, '⊹⊹⊹') 
       .replace(/^(\s*)(#+)/gm, (match, space, hashes) => space + '✦'.repeat(hashes.length)) 
       .replace(/^(\s*)(?:-|\*)\s/gm, '$1⊹ ') 
+      .replace(/\*([^\*]+)\*/g, (match, inner) => Array.from(inner).map(c => c + '\u0332').join(''))
       .replace(/[【】]/g, '◈') 
       .replace(/：/g, ': ')
       .replace(/，/g, ', ')
@@ -1573,8 +1840,26 @@ if (!seal.ext.find("AI-role")) {
         }
         
         content = content.replace(/\\f|\f/g, "").replace(/\\n/g, "\n").trim();
+
+        // ========== 新增：带图片/链接保护的 renderText 渲染层 ==========
+        let renderedContent = "";
+        let cursor = 0;
+        // 保护图片、CQ码、URL等，防止其中的英文字母被 renderText 转码破坏链接
+        const protectRegex = /!\[.*?\]\([^\)]+\)|\[CQ:[^\]]+\]|\[IMG:[^\]]+\]|https?:\/\/[^\s\u4e00-\u9fa5]+|data:image\/[^;]+;base64,[^)\s\]]+/g;
+        let matchResult;
+        
+        while ((matchResult = protectRegex.exec(content)) !== null) {
+            renderedContent += renderText(content.slice(cursor, matchResult.index));
+            renderedContent += matchResult[0];
+            cursor = protectRegex.lastIndex;
+        }
+        renderedContent += renderText(content.slice(cursor));
+        content = renderedContent;
+        // ===============================================================
+
         return `${roleLabel}: ${content}`;
     });
+
     try {
       const backendUrl = "https://pastedl.syocars.workers.dev"; 
       const fileNameSafe = sessionName || "当前对话记录";
@@ -1715,12 +2000,12 @@ API密钥: ${formatMasked(p.apiKey)}
 识别图片: ${formatBool(p.enableImage)}
 调试模式: ${formatBool(p.debugMode)}
 联网请求: ${formatBool(p.enableNetwork)}
-向知识库推送模组: ${formatBool(p.pushModuleToKB)}
 知识库同步: ${formatBool(p.enableKBSync)}
 知识库同步API: ${formatMasked(p.kbSyncApi)}
 知识库检索: ${formatBool(p.enableKBQuery)}
 知识库检索API: ${formatMasked(p.kbQueryApi)}
 文风总结: ${formatBool(p.enableStyleSummary)} 
+语义压缩: ${formatBool(p.enableSemanticCompress)}
 主线总结: ${formatBool(p.enableStoryArc)} 
 最大回复tokens数: ${formatVal(p.maxTokens)}
 最大回复字符数: ${formatVal(p.maxChars)}
@@ -1758,8 +2043,22 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         
         const oldSession = getSession(sessionKey);
         const newSession = new ChatGPTSession(dynamicConfig);
+        
+        // 1. 先导入存档数据，此时 newSession.personalConfig 存放的是历史状态
         newSession.importSession(savedData);
-        newSession.personalConfig = JSON.parse(JSON.stringify(oldSession.personalConfig));
+        
+        // 2. 提取存档中的专属上下文状态（防止空指针异常做安全回退）
+        const savedPersonal = newSession.personalConfig || {};
+        
+        // 3. 【精准合并】以当前运行环境为底板，只把该会话独有的“记忆块”插回去
+        newSession.personalConfig = {
+            ...oldSession.personalConfig,              // 继承当前有效的 API 密钥、端点、各项功能开关
+            moduleData: savedPersonal.moduleData,      // 精准还原：本地模组
+            systemPrompt: savedPersonal.systemPrompt,  // 精准还原：客制化系统提示
+            storyArcAnchor: savedPersonal.storyArcAnchor, // 精准还原：主线总结剧情
+            fixedAnchors: savedPersonal.fixedAnchors   // 精准还原：状态栏代码块记忆
+        };
+        
         newSession.anchor.refresh(dynamicConfig);
         updateSession(sessionKey, newSession); 
         seal.replyToSender(ctx, msg, `✧ 会话「${sessionName}」加载成功 锁定状态覆盖`);
@@ -1786,7 +2085,8 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         { on: "开启识别图片", off: "关闭识别图片", key: "enableImage", label: "图片识别" },
         { on: "开启图片识别", off: "关闭图片识别", key: "enableImage", label: "图片识别" },
         { on: "开启联网请求", off: "关闭联网请求", key: "enableNetwork", label: "联网请求" },
-        { on: "开启向知识库推送模组", off: "关闭向知识库推送模组", key: "pushModuleToKB", label: "向知识库推送模组" },
+        { on: "开启语义压缩", off: "关闭语义压缩", key: "enableSemanticCompress", label: "语义压缩" },
+
         { on: "开启知识库同步", off: "关闭知识库同步", key: "enableKBSync", label: "知识库同步" },
         { on: "开启知识库检索", off: "关闭知识库检索", key: "enableKBQuery", label: "知识库检索" },
         { on: "开启文风总结", off: "关闭文风总结", key: "enableStyleSummary", label: "文风总结" },
@@ -1873,9 +2173,9 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         if (!target || target === "api" || target === "配置" || target === "全部" || target === "所有") {
             session.personalConfig = { 
   apiUrl: null, apiKey: null, modelName: null, 
-  pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null, pushModuleToKB: null,
+  pureModeEnabled: null, useReply: null, enableStream: null, enableImage: null, debugMode: null, enableNetwork: null, 
   maxNetworkIterations: null, webpageMaxLength: null, enableKBSync: null, kbSyncApi: null,
-  enableKBQuery: null, kbQueryApi: null,enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,
+  enableKBQuery: null, kbQueryApi: null,enableStyleSummary: null, enableStoryArc: null, storyArcAnchor: null,enableSemanticCompress: null,
   temperature: null, top_p: null, top_k: null,
   presence_penalty: null, frequency_penalty: null, seed: null,
   depth: null, filterIdEnabled: null,
@@ -1895,8 +2195,8 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
             "引用回复": "useReply", "流式请求": "enableStream", "识别图片": "enableImage", "图片识别": "enableImage",
             "开启识别图片": "enableImage", "开启图片识别": "enableImage", "调试模式": "debugMode", "开启调试模式": "debugMode",
             "联网请求": "enableNetwork", "开启联网请求": "enableNetwork", 
-            "向知识库推送模组": "pushModuleToKB", "开启向知识库推送模组": "pushModuleToKB",
             "网页抓取最大字符数": "webpageMaxLength", "联网最大迭代次数": "maxNetworkIterations",
+"语义压缩": "enableSemanticCompress", "开启语义压缩": "enableSemanticCompress",
             "知识库同步": "enableKBSync", "开启知识库同步": "enableKBSync", "知识库同步api": "kbSyncApi",
             "知识库检索": "enableKBQuery", "开启知识库检索": "enableKBQuery", "知识库检索api": "kbQueryApi",
 "文风总结": "enableStyleSummary", "主线总结": "enableStoryArc",
@@ -1941,7 +2241,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
       if (!exportText.trim()) return seal.replyToSender(ctx, msg, "✧ 未配置系统提示 无法导出");
 
       try {
-        const backendUrl = "https://pastedl.workers.dev"; 
+        const backendUrl = "https://pastedl.syocars.workers.dev"; 
         
         const response = await fetch(`${backendUrl}/upload`, {
           method: "POST",
@@ -1991,7 +2291,9 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         newSession.personalConfig = { ...oldSession.personalConfig }; 
         newSession.personalConfig.fixedAnchors = {};
         newSession.personalConfig.storyArcAnchor = null;
+        newSession.personalConfig.moduleData = null; // 💡 显式将模组配置剥离，实现同步清除
         updateSession(sessionKey, newSession); 
+
 
         const syncApiUrl = newSession.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
         if (syncApiUrl) {
@@ -2116,6 +2418,73 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           }
       }
 
+      // === 新增精细操作：推送外部模组到云端 ===
+      const pushModuleMatch = text.match(/^推送模组\s*(.*)$/);
+      if (pushModuleMatch) {
+          let moduleName = pushModuleMatch[1].trim();
+          let session = getSession(sessionKey);
+          if (!moduleName) {
+              seal.replyToSender(ctx, msg, "✧ 请指定要推送的外部模组名称");
+              return;
+          }
+
+          const pConfig = session.personalConfig || {};
+          const syncApiUrl = pConfig.kbSyncApi || dynamicConfig.kbSyncApi;
+          if (!syncApiUrl) {
+              seal.replyToSender(ctx, msg, "✧ 当前环境未配置知识库同步API，无法向云端推送");
+              return;
+          }
+
+          seal.replyToSender(ctx, msg, `✧ 正在获取并推送外部模组「${moduleName}」到云端 ...`);
+          
+          try {
+              let baseUrl = pConfig.moduleBaseUrl || dynamicConfig.moduleBaseUrl || "http" + "://127.0.0.1:8080/modules/";
+              if (!baseUrl.endsWith('/')) { baseUrl += '/'; }
+              const fileUrl = `${baseUrl}${encodeURIComponent(moduleName)}.txt`;
+              
+              const response = await safeFetchWithTimeout(fileUrl, {}, 100000);
+              if (!response.ok) throw new Error(`✧ HTTP状态异常 ${response.status}`);
+              const content = await response.text();
+              
+              // 【判定对齐】: 使用与云端会话完全一致的 <module_data> 标签包裹
+              const newContent = `${content}`;
+              
+              // 提取最新的当前会话记录
+              let pureHistory = session.dynamicContent.map(msg => {
+    // 👇 改为提取 filteredContent，彻底剔除 ``` 代码块
+    let { filteredContent } = filterContent(msg.content); 
+    let syncText = filteredContent;
+    if (typeof syncText === 'string') {
+        syncText = syncText.replace(/^\(QQ:\d+\)\s*/i, "");
+        syncText = syncText.replace(/^\(.*?\)\s*/, ""); 
+    }
+    return { role: msg.role, content: syncText };
+});
+
+              const syncPayload = {
+                  sessionId: sessionKey, 
+                  timestamp: Date.now(),
+                  moduleData: newContent,
+                  history: pureHistory
+              };
+
+              // 进行云端投递
+              const syncRes = await fetch(syncApiUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(syncPayload)
+              });
+
+              if (!syncRes.ok) throw new Error(`✧ 云端API响应异常 ${syncRes.status}`);
+
+              seal.replyToSender(ctx, msg, `✧ 模组「${moduleName}」已成功推送到云端`);
+          } catch (error) {
+              console.error("抓取或推送外部模组失败:", error);
+              seal.replyToSender(ctx, msg, `✧ 推送模组「${moduleName}」失败\n(请确认该 txt 文件部署路径正确且云端API畅通)\n错误详情: ${error.message}`);
+          }
+          return;
+      }
+
       if (/^(中止生成|停止生成)$/i.test(text)) {
           let session = getSession(sessionKey);
           if (session.isGenerating && session.abortController) {
@@ -2229,6 +2598,18 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
           try {
               await syncModule(session, dynamicConfig);
               
+              // 【修复：添加这一段防串台机制】
+              // 1. 每次重新生成前，手动将本地残留的上下文清空
+              session.ragContext = null;
+              session.webSearchContext = null;
+              session.styleContext = null;
+              
+              // 2. 提前把本地删除脏数据的动作同步到云端，防止等下的 RAG 检索拉取到刚删除的“幽灵记忆”
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+              
+              // 3. 延迟 300ms 等待云端知识库落盘处理
+              await new Promise(resolve => setTimeout(resolve, 300));
+
               // 补全缺失的上下文任务 (使其调用公开API进行RAG/联网检索)
               const currentUserMsg = session.dynamicContent[session.dynamicContent.length - 1];
               if (currentUserMsg && currentUserMsg.role === 'user') {
@@ -2238,18 +2619,19 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                   }
 
                   // 重新生成分支 —— 不传第三参数
-await Promise.all([
-    executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
-    updateStyleSummary(session, dynamicConfig)
-]);
+                  await Promise.all([
+                      executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
+                      updateStyleSummary(session, dynamicConfig)
+                  ]);
               }
-
-              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
 
               const payload = session.buildPayload();
               const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal);
 
               session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+              
+              syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+              
               updateSession(sessionKey, session);
               await Promise.all([
                   updateStatusBar(session, result.originalReply, dynamicConfig),
@@ -2271,6 +2653,7 @@ await Promise.all([
           }
           return;
       }
+
 
       const deleteMatch = text.match(/^删除轮数\s*(\d+)$/i);
       if (deleteMatch) {
@@ -2403,6 +2786,12 @@ session.styleContext = null;
           let remaining = roundsToShow;
           let msgs = [...session.dynamicContent]; 
           
+          // 1. 新增：先把末尾尚未得到 AI 回复的单方面 user 消息剥离暂存
+          let tail = [];
+          while (msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
+              tail.unshift(msgs.pop());
+          }
+          
           while (remaining > 0 && msgs.length > 0) {
               let aiIdx = -1;
               for (let i = msgs.length - 1; i >= 0; i--) {
@@ -2416,6 +2805,11 @@ session.styleContext = null;
               displayRounds.unshift(roundMsgs); 
               msgs.splice(start, roundMsgs.length);
               remaining--;
+          }
+          
+          // 2. 新增：将暂存的最新用户消息追加到最后
+          if (tail.length > 0) {
+              displayRounds.push(tail);
           }
           
           let formattedHistory = `✧ 最近${displayRounds.length}轮对话记录\n\n`;
@@ -2504,10 +2898,18 @@ session.styleContext = null;
 
               // 3. 正式向主干 AI 发送完整打包好的上下文
               const payload = session.buildPayload();
-              const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
-              
-              // 4. AI 顺利回复 把 AI 的话也【登记备案】
-              session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+const result = await sendOpenAIRequest(payload, ctx, msg, session, controller.signal); 
+
+// 新增拦截：如果 AI 给了空包，抛弃这次记录并提示
+if (!result.originalReply || result.originalReply.trim() === "") {
+    seal.replyToSender(ctx, msg, "✧ API返回了空包，可能是模型审查或网络截断。请尝试重新生成。");
+    return; // 终止后续的上下文登记和更新操作
+}
+
+session.addDynamicMessage("assistant", result.originalReply, result.filteredReply);
+
+syncToKnowledgeBase(session, dynamicConfig, sessionKey);
+
 
               updateSession(sessionKey, session); 
               await Promise.all([
@@ -2551,6 +2953,8 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         const payload = session.buildPayload();
         const result = await sendOpenAIRequest(payload, ctx, msg, session, subController.signal);
         session.addDynamicMessage('assistant', result.originalReply, result.filteredReply);
+        
+        syncToKnowledgeBase(session, dynamicConfig, sessionKey);
         
         updateSession(sessionKey, session);
         await Promise.all([
@@ -2614,27 +3018,22 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           console.log("========== [调试模式: 发送给主干AI的 Final Messages] ==========\n" + JSON.stringify(logMessages, null, 2) + "\n============================================================");
       }
 
-      async function makeRequest(payloadBody) {
+      // 这里的参数多加一个 attemptSignal
+      async function makeRequest(payloadBody, attemptSignal) {
           let contentObj = { text: "" };
           let fetchOptions = {
               method: "POST",
               headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ ...payloadBody, stream: enableStream })
+              body: JSON.stringify({ ...payloadBody, stream: enableStream }),
+              signal: attemptSignal // 核心：严格使用局部阻断信号
           };
-          
-          // 仅在原生支持的情况下才把 signal 塞给底层 fetch
-          if (signal && typeof AbortController !== 'undefined') {
-              fetchOptions.signal = signal;
-          }
 
           if (enableStream) {
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`API错误: ${errData.error?.message || response.statusText}`); }
               
-              // 阻塞接收完整流数据
               const text = await response.text();
               
-              // 强行打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
               
               const lines = text.split("\n");
@@ -2658,7 +3057,6 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
               const response = await fetch(apiUrl, fetchOptions);
               if (!response.ok) { const errData = await response.json().catch(()=>({})); throw new Error(`✧ API错误: ${errData.error?.message || response.statusText}`); }
               
-              // 非流式打断判定
               if (signal && signal.aborted) { let e = new Error("aborted"); e.name = "AbortError"; throw e; }
               
               const data = await response.json();
@@ -2666,6 +3064,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           }
           return contentObj;
       }
+
 
 
       let replyContent = "";
@@ -2680,28 +3079,55 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
           frequency_penalty: frequency_penalty, seed: seed, stream: enableStream,
         };
 
+        // 为当前尝试创建专属阻断器
+        const attemptController = typeof AbortController !== "undefined" ? new AbortController() : null;
+        
+        // 桥接全局的"中止生成"指令 (解决你说的中止生成/删除轮数联动问题)
+        let parentAbortCheck = null;
+        if (signal && attemptController) {
+            if (signal.aborted) { attemptController.abort(); throw new Error("aborted"); }
+            parentAbortCheck = setInterval(() => {
+                if (signal.aborted) attemptController.abort();
+            }, 300);
+        }
+
         try {
           let currentPayload = { ...payload, messages: finalMessages };
-          let res = await makeRequest(currentPayload);
+          
+          let res = await makeRequest(currentPayload, attemptController ? attemptController.signal : null);
+          
           replyContent = res.text;
           finalError = null; 
-          break;
+          if (parentAbortCheck) clearInterval(parentAbortCheck);
+          break; 
         } catch (error) {
+          // 彻底物理阻断旧连接
+          if (attemptController) attemptController.abort(); 
+          if (parentAbortCheck) clearInterval(parentAbortCheck);
+
           finalError = error;
+          if (error.name === 'AbortError' || error.message.includes('aborted')) {
+              throw error; 
+          }
+
           if (debugMode) {
               console.error(`[调试模式] 模型 ${currentModel} 请求异常:`, error);
-              seal.replyToSender(ctx, msg, `[调试日志] ${currentModel} 主干AI请求异常:\n${error.message}`);
           } else if (mIdx < models.length - 1) { 
-              seal.replyToSender(ctx, msg, "✧ 响应失败 尝试使用次选模型 ..."); 
+              seal.replyToSender(ctx, msg, "✧ 响应异常或超时 已强行截断旧连接 尝试切换备用模型..."); 
           }
         }
       }
 
+
+
       if (finalError) throw finalError;
 
-      if (debugMode) console.log("[主干AI原始回复]:\n" + replyContent);
+      // 1. 固定打印主干AI的原始回复（保留所有代码块和思维过程）
+      console.log("========== [主干AI原始回复] ==========\n" + replyContent);
+      
       const { filteredContent, codeBlocks } = filterContent(replyContent); 
       let safeContent = filteredContent;
+
 
       let displayReply = "";
       let cursor = 0;
@@ -2732,6 +3158,9 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         });
       }
 
+      // 2. 固定打印最终处理完毕、准备发给QQ的纯净回复
+      console.log("========== [最终输出内容] ==========\n" + displayReply);
+      
       const forcedBubbles = displayReply.split(/\\f|\f/);
       const splitLimit = 600; 
       const chunks = [];
@@ -2765,7 +3194,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         }
         segments.push(chunks[i]);
         seal.replyToSender(ctx, msg, segments.join(""));
-        if (i < chunks.length - 1) { await new Promise(resolve => setTimeout(resolve, 800)); }
+        if (i < chunks.length - 1) { await new Promise(resolve => setTimeout(resolve, 2000)); }
       }
       return { originalReply: replyContent, filteredReply: filteredContent };
     } catch (error) { 
@@ -2789,6 +3218,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
     newSession.personalConfig = { ...oldSession.personalConfig }; 
     newSession.personalConfig.fixedAnchors = {};
     newSession.personalConfig.storyArcAnchor = null;
+    newSession.personalConfig.moduleData = null; // 💡 显式将模组配置剥离，实现同步清除
     updateSession(sessionKey, newSession); 
 
     const syncApiUrl = newSession.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
