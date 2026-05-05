@@ -2219,12 +2219,16 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
   presence_penalty: null, frequency_penalty: null, seed: null,
   depth: null, filterIdEnabled: null,
   maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
-  moduleBaseUrl: null, moduleData: null, fixedAnchors: {}
+  // === 修改处：继承原有的模组配置，防止被重置清空 ===
+  moduleBaseUrl: session.personalConfig.moduleBaseUrl, 
+  moduleData: session.personalConfig.moduleData, 
+  fixedAnchors: {}
 };
             updateSession(sessionKey, session);
-            seal.replyToSender(ctx, msg, "✧ 当前环境配置已重置");
+            seal.replyToSender(ctx, msg, "✧ 当前环境配置已重置（已保留加载的模组）");
             return true;
         }
+
 
         const resetMap = {
             "api端点": "apiUrl", "api密钥": "apiKey", "api秘钥": "apiKey", "外部模组地址": "moduleBaseUrl",
