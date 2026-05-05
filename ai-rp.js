@@ -257,7 +257,7 @@ this.publicApiSystemPrompt = seal.ext.getStringConfig(this.ext, "公用API全局
       this.dynamicContent = [];
       this.fullHistory = [];
       this.ragContext = null; 
-      this.styleContext = null;
+
       this.webSearchContext = null; 
       
       this.isGenerating = false;
@@ -365,11 +365,18 @@ this.publicApiSystemPrompt = seal.ext.getStringConfig(this.ext, "公用API全局
           coreMsgs.push({ role: "system", content: this.ragContext, _type: "rag_context" });
       }
 
-      if (this.styleContext) {
-          coreMsgs.push({ role: "system", content: this.styleContext, _type: "style_context" });
+      // === 修改点：外挂热拉取：彻底解耦的文风缓存 ===
+      const isStyleEnabled = (pConfig.enableStyleSummary !== null && pConfig.enableStyleSummary !== undefined) ? pConfig.enableStyleSummary : this.config.enableStyleSummary;
+      if (isStyleEnabled && this.sessionKey) {
+          // 直接摸底层独立硬盘，完全不碰 session 内存对象
+          const externalStyleCache = this.config.ext.storageGet("style_cache_" + this.sessionKey);
+          if (externalStyleCache) {
+              coreMsgs.push({ role: "system", content: `<book_refs>\n${externalStyleCache}\n</book_refs>`, _type: "style_context" });
+          }
       }
 
       if (this.webSearchContext) {
+
           coreMsgs.push({ role: "user", content: this.webSearchContext, _type: "web_search_context" });
       }
 
@@ -599,11 +606,14 @@ this.publicApiSystemPrompt = seal.ext.getStringConfig(this.ext, "公用API全局
     if (!session) {
       const autoSavedData = sessionManager.loadAutoSave(sessionKey);
       session = new ChatGPTSession(dynamicConfig);
+      session.sessionKey = sessionKey; // <--- 新增：让实例记住自己的身份
       if (autoSavedData) {
         session.importSession(autoSavedData);
         session.anchor.refresh(dynamicConfig);
       }
       sessions.set(sessionKey, session);
+    } else {
+      session.sessionKey = sessionKey; // <--- 新增：已存在的也稳妥绑定一下
     }
     recordSessionActivity(sessionKey);
     return session;
@@ -1473,27 +1483,19 @@ if (session.abortController && session.abortController.signal.aborted) {
 
 
 
-  async function updateStyleSummary(session, dynConfig, latestUserText = "") {
-      const pConfig = session.personalConfig || {};
-      const enableStyle = (pConfig.enableStyleSummary !== null && pConfig.enableStyleSummary !== undefined)
-          ? pConfig.enableStyleSummary
-          : dynConfig.enableStyleSummary;
-
-      if (!enableStyle) return;
-
+  async function generateStyleSummary(session, dynConfig) {
       try {
-          const rounds = getLastNRounds(session.dynamicContent, 2);
-          if (rounds.length === 0 && !latestUserText) return;
+          const rounds = getLastNRounds(session.dynamicContent, 4); // 提取最近4轮作为总结素材
+          if (rounds.length === 0) return null;
 
           const historyText = rounds.map(m => {
               const { pureText } = filterContent(typeof m.content === 'string' ? m.content : "");
               return `${m.role === 'user' ? 'user' : 'assistant'}: ${pureText}`;
           }).join('\n');
 
-          const { pureText: cleanTail } = filterContent(latestUserText);
-          const tailText = cleanTail.trim() ? `\nuser: ${cleanTail.trim()}` : "";
-          const prompt = "[前文记录]\n" + historyText + tailText + "\n\n[系统指令]\n" + dynConfig.styleSummaryPrefix;
+          const prompt = "[前文记录]\n" + historyText + "\n\n[系统指令]\n" + dynConfig.styleSummaryPrefix;
 
+          const pConfig = session.personalConfig || {};
           const isNetworkEnabled = (pConfig.enableNetwork !== null && pConfig.enableNetwork !== undefined) ? pConfig.enableNetwork : dynConfig.enableNetwork;
           let result = "";
 
@@ -1501,36 +1503,17 @@ if (session.abortController && session.abortController.signal.aborted) {
               const models = dynConfig.publicModelName.split(/[\s]+|\\n|\\r/).filter(m => m.trim() !== "");
               let messagesContext = [{ role: "user", content: prompt }];
               
-              // 👇 新增这段：将 system 提示词置顶
               if (dynConfig.publicApiSystemPrompt && dynConfig.publicApiSystemPrompt.trim() !== "") {
                   messagesContext.unshift({ role: "system", content: dynConfig.publicApiSystemPrompt });
               }
 
               for (let mIdx = 0; mIdx < models.length; mIdx++) {
-              // ... 保持原有代码不变 ...
                   const currentModel = models[mIdx];
                   const payload = {
-                      model: currentModel,
-                      temperature: 0.1,
-                      max_tokens: dynConfig.maxTokens,
-                      messages: messagesContext,
+                      model: currentModel, temperature: 0.1, max_tokens: dynConfig.maxTokens, messages: messagesContext,
                       tools: [
-                          {
-                              type: "function",
-                              function: {
-                                  name: "web_search",
-                                  description: "使用搜索引擎查询书籍、文学作品、作者、原文段落等相关信息。当需要为当前对话寻找匹配的参考书籍时使用此工具。",
-                                  parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-                              }
-                          },
-                          {
-                              type: "function",
-                              function: {
-                                  name: "read_link",
-                                  description: "读取指定网页链接的详细文本内容。当搜索结果并未提供原文，或者需要深入了解某个特定URL网页的具体正文时使用此工具。",
-                                  parameters: { type: "object", properties: { url: { type: "string", description: "需要读取内容的完整网页URL" } }, required: ["url"] }
-                              }
-                          }
+                          { type: "function", function: { name: "web_search", description: "使用搜索引擎查询书籍、文学作品等相关信息。当需要为当前对话寻找匹配的参考书籍时使用此工具。", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
+                          { type: "function", function: { name: "read_link", description: "读取指定网页链接的详细文本内容。", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } }
                       ],
                       tool_choice: "auto"
                   };
@@ -1541,29 +1524,12 @@ if (session.abortController && session.abortController.signal.aborted) {
 
                   while (iteration < MAX_ITERS) {
                       iteration++;
-if (session.abortController && session.abortController.signal.aborted) {
-    if (dynConfig.debugMode) console.log("✧ 联网轮询检测到中止信号 提前终止迭代");
-    break; 
-}
-
-                      
-// ==== 【修复：统一使用兼容性更高的 auto，并在最后收回工具】 ====
-if (iteration === MAX_ITERS) { 
-    // 最后一轮：没收所有工具，逼它立刻开口总结！
-    delete payload.tools; 
-    delete payload.tool_choice; 
-} else {
-    // 恢复自由身，全程使用 auto 确保兼容性，由模型自行决定是否搜索
-    payload.tool_choice = "auto";
-}
-// ==========================================
+                      if (iteration === MAX_ITERS) { delete payload.tools; delete payload.tool_choice; } 
+                      else { payload.tool_choice = "auto"; }
 
                       try {
-                          // ... 请求 API ...
-
                           const response = await safeFetchWithTimeout(dynConfig.publicApiUrl, {
-                              method: "POST",
-                              headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
+                              method: "POST", headers: { Authorization: `Bearer ${dynConfig.publicApiKey}`, "Content-Type": "application/json" },
                               body: JSON.stringify({...payload, messages: messagesContext})
                           }, 100000);
                           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1575,55 +1541,34 @@ if (iteration === MAX_ITERS) {
                               for (let tc of msgObj.tool_calls) {
                                   if (["web_search", "google_search"].includes(tc.function.name)) {
                                       let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                                      if (dynConfig.debugMode) console.log(`✧ 文风总结联网 工具请求: ${args.query}`);
                                       let searchRes = await performSerperSearch(args.query || "", dynConfig);
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: searchRes });
                                   } else if (tc.function.name === "read_link") {
                                       let args = {}; try { args = JSON.parse(tc.function.arguments); } catch(e) {}
-                                      if (dynConfig.debugMode) console.log(`✧ 工具请求: 读取网页 ${args.url}`);
-                                      
-                                                                        let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
-                                  
-                                  // 仅限文风总结：完全过滤 read_link 传入的 images，强制纯文本返回
-                                  if (pageRes && !pageRes.includes("抓取网页失败") && !pageRes.includes("执行异常")) {
-                                      const { cleanedMarkdown } = filterAndScoreImages(pageRes);
-                                      if (dynConfig.debugMode) console.log(`✧ 文风总结读取网页：图片已完全过滤，仅返回纯文本`);
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: cleanedMarkdown });
-                                  } else {
+                                      let pageRes = await fetchWebpageContent(args.url || "", dynConfig.webpageMaxLength);
                                       messagesContext.push({ role: "tool", tool_call_id: tc.id, content: pageRes });
-                                  }
                                   } else {
-                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "✧ 系统错误 无需调用此工具" });
+                                      messagesContext.push({ role: "tool", tool_call_id: tc.id, content: "系统错误" });
                                   }
                               }
                           } else {
                               result = msgObj.content || "";
-                              success = true;
-                              break;
+                              success = true; break;
                           }
-                      } catch (e) {
-                          if (dynConfig.debugMode) console.error(`✧ 文风总结联网异常 模型 ${currentModel}:`, e);
-                          break;
-                      }
+                      } catch (e) { break; }
                   }
                   if (success) break;
               }
-              
-              if (!result || result.trim() === "") {
-                  result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
-              }
+              if (!result || result.trim() === "") result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
           } else {
               result = await sendPublicAPIRequest(session, [{ role: "user", content: prompt }], dynConfig);
           }
-
-          if (result && result.trim() !== '') {
-              session.styleContext = `<book_refs>\n${result.trim()}\n</book_refs>`;
-              console.log(`========== [文风总结最终插入内容] ==========\n${session.styleContext}`);
-          }
+          return result;
       } catch (e) {
-          console.error("✧ 文风总结异常", e);
+          console.error("✧ 文风总结异常", e); return null;
       }
   }
+
 
 
   // === 状态栏与主线快照 防并发竞态回滚 (最终防漏水版) ===
@@ -2064,6 +2009,29 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         return true;
       }
 
+      if (text.match(/^文风总结$/i)) {
+          let session = getSession(sessionKey);
+          if (session.dynamicContent.length === 0) {
+              seal.replyToSender(ctx, msg, "✧ 当前没有可供总结的对话记录。");
+              return true;
+          }
+          
+          seal.replyToSender(ctx, msg, "✧ 正在提取当前对话文风，请稍候...");
+          
+          // 完全游离在主干系统之外的异步任务，绝不堵塞正常聊天
+          (async () => {
+              const result = await generateStyleSummary(session, dynamicConfig);
+              if (result && result.trim() !== '') {
+                  // 【核心】：不调用 updateSession，不污染聊天历史，直接写入海豹底层存储
+                  dynamicConfig.ext.storageSet("style_cache_" + sessionKey, result.trim());
+                  seal.replyToSender(ctx, msg, `✧ 文风总结已生成并独立缓存：\n\n${result.trim()}\n\n(提示：开启[文风总结]开关后，每次对话将自动热拉取该外挂缓存)`);
+              } else {
+                  seal.replyToSender(ctx, msg, "✧ 文风总结生成失败或未获取到有效内容。");
+              }
+          })();
+          return true;
+      }
+
       if (text.startsWith("保存会话")) {
         const sessionName = text.slice(4).trim();
         if (!sessionName) return seal.replyToSender(ctx, msg, "✧ 请输入会话名称");
@@ -2219,16 +2187,12 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
   presence_penalty: null, frequency_penalty: null, seed: null,
   depth: null, filterIdEnabled: null,
   maxTokens: null, maxChars: null, contextRounds: null, systemPrompt: null,
-  // === 修改处：继承原有的模组配置，防止被重置清空 ===
-  moduleBaseUrl: session.personalConfig.moduleBaseUrl, 
-  moduleData: session.personalConfig.moduleData, 
-  fixedAnchors: {}
+  moduleBaseUrl: null, moduleData: null, fixedAnchors: {}
 };
             updateSession(sessionKey, session);
-            seal.replyToSender(ctx, msg, "✧ 当前环境配置已重置（已保留加载的模组）");
+            seal.replyToSender(ctx, msg, "✧ 当前环境配置已重置");
             return true;
         }
-
 
         const resetMap = {
             "api端点": "apiUrl", "api密钥": "apiKey", "api秘钥": "apiKey", "外部模组地址": "moduleBaseUrl",
@@ -2335,6 +2299,8 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
         newSession.personalConfig.fixedAnchors = {};
         newSession.personalConfig.storyArcAnchor = null;
         newSession.personalConfig.moduleData = null; // 💡 显式将模组配置剥离，实现同步清除
+        dynamicConfig.ext.storageSet("style_cache_" + sessionKey, "");
+
         updateSession(sessionKey, newSession); 
 
 
@@ -2644,8 +2610,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
               // 【修复：添加这一段防串台机制】
               // 1. 每次重新生成前，手动将本地残留的上下文清空
               session.ragContext = null;
-              session.webSearchContext = null;
-              session.styleContext = null;
+              session.webSearchContext = null;            
               
               // 2. 提前把本地删除脏数据的动作同步到云端，防止等下的 RAG 检索拉取到刚删除的“幽灵记忆”
               syncToKnowledgeBase(session, dynamicConfig, sessionKey);
@@ -2662,10 +2627,7 @@ Frequency Penalty: ${formatVal(p.frequency_penalty)}
                   }
 
                   // 重新生成分支 —— 不传第三参数
-                  await Promise.all([
-                      executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
-                      updateStyleSummary(session, dynamicConfig)
-                  ]);
+                  await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
               }
 
               const payload = session.buildPayload();
@@ -2732,7 +2694,7 @@ while (session.dynamicContent.length > 0 &&
               
 session.webSearchContext = null;
 session.ragContext = null;
-session.styleContext = null;
+
           rollbackAnchors(session, dynamicConfig);
           
                     // ... 前面的删除本地轮数代码保持不变 ...
@@ -2791,7 +2753,7 @@ if (deleteCountMatch) {
 
 session.webSearchContext = null;
 session.ragContext = null;
-session.styleContext = null; 
+ 
     rollbackAnchors(session, dynamicConfig);
 
     if (session.isGenerating && session.abortController) {
@@ -2929,10 +2891,7 @@ session.styleContext = null;
               // 1. 锁死之后 开始做耗时的前置任务（联网、知识库检索）
 
               await syncModule(session, dynamicConfig);
-              await Promise.all([
-                  executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg),
-                  updateStyleSummary(session, dynamicConfig, processedText)
-              ]);
+              await executeContextTasks(session, processedText, userId, sessionKey, dynamicConfig, ctx, msg);
               
               // 2. 耗时任务安全做完 把用户的话正式【登记备案】
               session.addDynamicMessage("user", processedText, null, userId);
@@ -2983,10 +2942,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
         const combinedPendingText = pendingSnapshot.map(pm => pm.content).join("\n");
         
         // 将合并后的文本 combinedPendingText 传入上下文任务，并与文风总结并行处理
-        await Promise.all([
-            executeContextTasks(session, combinedPendingText, pendingSnapshot[pendingSnapshot.length - 1].userId, sessionKey, dynamicConfig, ctx, msg),
-            updateStyleSummary(session, dynamicConfig, combinedPendingText)
-        ]);
+        await executeContextTasks(session, combinedPendingText, pendingSnapshot[pendingSnapshot.length - 1].userId, sessionKey, dynamicConfig, ctx, msg);
         
         // 依然按照原始顺序逐条存入历史记录，保持对话清晰
         for (const pm of pendingSnapshot) {
@@ -3262,6 +3218,7 @@ while (session.pendingUserMessages && session.pendingUserMessages.length > 0) {
     newSession.personalConfig.fixedAnchors = {};
     newSession.personalConfig.storyArcAnchor = null;
     newSession.personalConfig.moduleData = null; // 💡 显式将模组配置剥离，实现同步清除
+dynamicConfig.ext.storageSet("style_cache_" + sessionKey, "");
     updateSession(sessionKey, newSession); 
 
     const syncApiUrl = newSession.personalConfig.kbSyncApi || dynamicConfig.kbSyncApi;
